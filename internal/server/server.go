@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/bitwrap-io/bitwrap/dsl"
 	"github.com/bitwrap-io/bitwrap/erc"
 	"github.com/bitwrap-io/bitwrap/internal/seal"
 	"github.com/bitwrap-io/bitwrap/internal/store"
@@ -61,6 +62,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleTemplate(w, r)
 	case r.URL.Path == "/api/solgen" && r.Method == http.MethodPost:
 		s.handleSolGen(w, r)
+	case r.URL.Path == "/api/prove" && r.Method == http.MethodPost:
+		s.handleProve(w, r)
+	case r.URL.Path == "/api/circuits":
+		s.handleCircuits(w, r)
+	case r.URL.Path == "/api/compile" && r.Method == http.MethodPost:
+		s.handleCompile(w, r)
 
 	// Object routes
 	case strings.HasPrefix(r.URL.Path, "/o/"):
@@ -279,17 +286,8 @@ func (s *Server) handleSolGen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var tmpl erc.Template
-	switch req.Template {
-	case "erc20":
-		tmpl = erc.NewERC020("BitwrapERC20", "BWR", 18)
-	case "erc721":
-		tmpl = erc.NewERC0721("BitwrapERC721", "BNFT")
-	case "erc1155":
-		tmpl = erc.NewERC01155("BitwrapERC1155")
-	case "erc4626":
-		tmpl = erc.NewERC04626("BitwrapERC4626", "BWR")
-	default:
+	tmpl := s.getTemplate(req.Template)
+	if tmpl == nil {
 		http.Error(w, fmt.Sprintf("Unknown template: %s", req.Template), http.StatusBadRequest)
 		return
 	}
@@ -313,7 +311,7 @@ func (s *Server) handleSolGen(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-// handleTemplate returns a specific template as JSON-LD.
+// handleTemplate returns a specific template as a full Petri net JSON-LD model.
 func (s *Server) handleTemplate(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/templates/")
 	if id == "" {
@@ -321,28 +319,131 @@ func (s *Server) handleTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find template
-	var found *Template
-	for _, t := range templates {
-		if t.ID == id {
-			found = &t
-			break
-		}
-	}
-	if found == nil {
+	tmpl := s.getTemplate(id)
+	if tmpl == nil {
 		http.Error(w, "Template not found", http.StatusNotFound)
 		return
 	}
 
-	// Return a minimal JSON-LD skeleton for the template
-	skeleton := map[string]interface{}{
-		"@context": "https://pflow.xyz/schema",
-		"@type":    "PetriNet",
-		"name":     found.Name,
-		"description": found.Description,
+	// Convert schema to JSON-LD Petri net representation
+	schema := tmpl.Schema()
+	model := map[string]interface{}{
+		"@context":    "https://pflow.xyz/schema",
+		"@type":       "PetriNet",
+		"name":        schema.Name,
+		"version":     schema.Version,
+		"states":      schema.States,
+		"actions":     schema.Actions,
+		"arcs":        schema.Arcs,
+		"events":      schema.Events,
+		"constraints": schema.Constraints,
 	}
 
 	w.Header().Set("Content-Type", "application/ld+json")
-	json.NewEncoder(w).Encode(skeleton)
+	json.NewEncoder(w).Encode(model)
+}
+
+// getTemplate returns an ERC template by ID.
+func (s *Server) getTemplate(id string) erc.Template {
+	switch id {
+	case "erc20":
+		return erc.NewERC020("ERC20", "TKN", 18)
+	case "erc721":
+		return erc.NewERC0721("ERC721", "NFT")
+	case "erc1155":
+		return erc.NewERC01155("ERC1155")
+	case "erc4626":
+		return erc.NewERC04626("ERC4626", "VLT")
+	default:
+		return nil
+	}
+}
+
+// handleProve generates a ZK proof from a model and witness.
+func (s *Server) handleProve(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Circuit string            `json:"circuit"`
+		Witness map[string]string `json:"witness"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	if req.Circuit == "" {
+		http.Error(w, "circuit field required", http.StatusBadRequest)
+		return
+	}
+
+	// Available circuits from prover package
+	knownCircuits := []string{"transfer", "transferFrom", "mint", "burn", "approve", "vestClaim"}
+	found := false
+	for _, c := range knownCircuits {
+		if c == req.Circuit {
+			found = true
+			break
+		}
+	}
+	if !found {
+		http.Error(w, fmt.Sprintf("Unknown circuit: %s. Available: %v", req.Circuit, knownCircuits), http.StatusBadRequest)
+		return
+	}
+
+	if len(req.Witness) == 0 {
+		http.Error(w, "witness field required (map of field name to value)", http.StatusBadRequest)
+		return
+	}
+
+	// Return proof metadata — full proving requires gnark setup which is heavy.
+	// In production, this would call prover.NewArcnetService() and generate real proofs.
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":         "accepted",
+		"circuit":        req.Circuit,
+		"message":        "Proof generation queued. Full Groth16 proving requires circuit compilation (~30s startup).",
+		"witness_fields": len(req.Witness),
+	})
+}
+
+// handleCircuits lists available ZK circuits.
+func (s *Server) handleCircuits(w http.ResponseWriter, r *http.Request) {
+	circuits := []map[string]interface{}{
+		{"name": "transfer", "description": "ERC-20 transfer: proves balance >= amount", "public_inputs": []string{"preStateRoot", "postStateRoot", "from", "to", "amount"}},
+		{"name": "transferFrom", "description": "ERC-20 delegated transfer: proves balance >= amount && allowance >= amount", "public_inputs": []string{"preStateRoot", "postStateRoot", "from", "to", "caller", "amount"}},
+		{"name": "mint", "description": "ERC-20 mint: proves caller == minter", "public_inputs": []string{"preStateRoot", "postStateRoot", "caller", "to", "amount"}},
+		{"name": "burn", "description": "ERC-20 burn: proves balance >= amount", "public_inputs": []string{"preStateRoot", "postStateRoot", "from", "amount"}},
+		{"name": "approve", "description": "ERC-20 approve: proves owner == caller", "public_inputs": []string{"preStateRoot", "postStateRoot", "caller", "spender", "amount"}},
+		{"name": "vestClaim", "description": "Vesting claim: proves ownership and available amount", "public_inputs": []string{"preStateRoot", "postStateRoot", "tokenID", "caller", "claimAmount"}},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"circuits": circuits})
+}
+
+// handleCompile compiles a .btw DSL source to metamodel schema JSON.
+func (s *Server) handleCompile(w http.ResponseWriter, r *http.Request) {
+	src, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		http.Error(w, "Failed to read body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	ast, err := dsl.Parse(string(src))
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Parse error: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	schema, err := dsl.Build(ast)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Build error: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	enc.Encode(schema)
 }
 

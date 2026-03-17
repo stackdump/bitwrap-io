@@ -24,7 +24,6 @@ if (btnSave) {
 
             const data = await resp.json();
             if (data.cid) {
-                // Update URL with CID
                 const url = new URL(window.location);
                 url.searchParams.set('cid', data.cid);
                 window.history.pushState({}, '', url);
@@ -37,65 +36,93 @@ if (btnSave) {
     });
 }
 
-// Solidity generation button
+// Solidity generation button — shows template picker then generates
 const btnSolgen = document.getElementById('btn-solgen');
 if (btnSolgen) {
     btnSolgen.addEventListener('click', async () => {
-        const model = getModel();
-        if (!model) return;
-
         try {
+            // Fetch available templates
+            const listResp = await fetch('/api/templates');
+            if (!listResp.ok) return;
+            const listData = await listResp.json();
+            const templates = listData.templates || [];
+
+            const choice = prompt(
+                'Generate Solidity from template:\n' +
+                templates.map((t, i) => `${i + 1}. ${t.name}`).join('\n') +
+                '\n\nEnter number:'
+            );
+            if (!choice) return;
+            const idx = parseInt(choice) - 1;
+            if (idx < 0 || idx >= templates.length) return;
+
+            const template = templates[idx];
+            btnSolgen.textContent = 'Generating...';
+
             const resp = await fetch('/api/solgen', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(model)
+                body: JSON.stringify({ template: template.id })
             });
 
             if (!resp.ok) {
                 const text = await resp.text();
-                alert('Solidity generation not available: ' + text);
+                alert('Generation failed: ' + text);
+                btnSolgen.textContent = 'Solidity';
                 return;
             }
 
             const data = await resp.json();
             if (data.solidity) {
-                downloadFile(data.name + '.sol', data.solidity);
+                downloadFile(data.filename || 'contract.sol', data.solidity);
+                btnSolgen.textContent = 'Downloaded';
+                setTimeout(() => { btnSolgen.textContent = 'Solidity'; }, 2000);
             }
         } catch (err) {
-            alert('Solidity generation failed: ' + err.message);
+            alert('Generation failed: ' + err.message);
+            btnSolgen.textContent = 'Solidity';
         }
     });
 }
 
-// ZK Proof button
+// ZK Proof button — shows circuit picker then describes proof requirements
 const btnProve = document.getElementById('btn-prove');
 if (btnProve) {
     btnProve.addEventListener('click', async () => {
-        const model = getModel();
-        if (!model) return;
-
         try {
-            const resp = await fetch('/api/prove', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(model)
-            });
-
-            if (!resp.ok) {
-                const text = await resp.text();
-                alert('Proof generation not available: ' + text);
+            // Fetch available circuits
+            const circResp = await fetch('/api/circuits');
+            if (!circResp.ok) {
+                alert('Failed to load circuits');
                 return;
             }
+            const circData = await circResp.json();
+            const circuits = circData.circuits || [];
 
-            const data = await resp.json();
-            alert('Proof generated: ' + JSON.stringify(data, null, 2));
+            const choice = prompt(
+                'Available ZK circuits:\n' +
+                circuits.map((c, i) => `${i + 1}. ${c.name} — ${c.description}`).join('\n') +
+                '\n\nEnter number to see details:'
+            );
+            if (!choice) return;
+            const idx = parseInt(choice) - 1;
+            if (idx < 0 || idx >= circuits.length) return;
+
+            const circuit = circuits[idx];
+            alert(
+                `Circuit: ${circuit.name}\n\n` +
+                `${circuit.description}\n\n` +
+                `Public inputs:\n` +
+                circuit.public_inputs.map(p => `  - ${p}`).join('\n') +
+                `\n\nUse POST /api/prove with circuit="${circuit.name}" and witness values.`
+            );
         } catch (err) {
-            alert('Proof generation failed: ' + err.message);
+            alert('Failed: ' + err.message);
         }
     });
 }
 
-// Templates button
+// Templates button — loads real Petri net model into editor
 const btnTemplates = document.getElementById('btn-templates');
 if (btnTemplates) {
     btnTemplates.addEventListener('click', async () => {
@@ -107,9 +134,9 @@ if (btnTemplates) {
             const templates = data.templates || [];
 
             const choice = prompt(
-                'Available templates:\n' +
+                'Load template into editor:\n' +
                 templates.map((t, i) => `${i + 1}. ${t.name}`).join('\n') +
-                '\n\nEnter number to load:'
+                '\n\nEnter number:'
             );
 
             if (!choice) return;
@@ -120,11 +147,12 @@ if (btnTemplates) {
             const tmplResp = await fetch('/api/templates/' + template.id);
             if (tmplResp.ok) {
                 const tmplData = await tmplResp.json();
-                // If petri-view supports loading data, trigger it
                 if (petriView && petriView.loadModel) {
                     petriView.loadModel(tmplData);
                 } else {
-                    alert('Template loaded: ' + template.name + '\n(Reload editor to apply)');
+                    // Fallback: show as JSON
+                    const json = JSON.stringify(tmplData, null, 2);
+                    downloadFile(template.id + '.json', json);
                 }
             }
         } catch (err) {
@@ -139,7 +167,6 @@ function getModel() {
     if (petriView && petriView.getModel) {
         return petriView.getModel();
     }
-    // Fallback: try to read the embedded JSON-LD
     const script = document.querySelector('petri-view script[type="application/ld+json"]');
     if (script) {
         try {
