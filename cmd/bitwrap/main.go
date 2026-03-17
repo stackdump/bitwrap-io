@@ -18,7 +18,7 @@ func main() {
 	port := flag.Int("port", 8088, "Port to listen on")
 	dataDir := flag.String("data", "./data", "Data directory for storage")
 	noProver := flag.Bool("no-prover", false, "Disable ZK prover (faster startup)")
-	solgen := flag.Bool("solgen", false, "Enable Solidity generation endpoints")
+	noSolgen := flag.Bool("no-solgen", false, "Disable Solidity generation endpoints")
 	compile := flag.String("compile", "", "Compile a .btw file and output JSON schema to stdout")
 	flag.Parse()
 
@@ -52,7 +52,7 @@ func main() {
 
 	srv := server.New(storage, publicFS, server.Options{
 		EnableProver:   !*noProver,
-		EnableSolidity: *solgen,
+		EnableSolidity: !*noSolgen,
 	})
 
 	addr := fmt.Sprintf(":%d", *port)
@@ -61,8 +61,8 @@ func main() {
 	if *noProver {
 		log.Printf("ZK prover: disabled")
 	}
-	if *solgen {
-		log.Printf("Solidity generation: enabled")
+	if *noSolgen {
+		log.Printf("Solidity generation: disabled")
 	}
 	if err := http.ListenAndServe(addr, srv); err != nil {
 		log.Fatalf("Server failed: %v", err)

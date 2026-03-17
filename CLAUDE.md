@@ -16,7 +16,7 @@ make test             # Run tests
 -port 8088                  HTTP port (default 8088)
 -data ./data                Data directory for CID storage
 -no-prover                  Disable ZK prover (faster startup)
--solgen                     Enable Solidity generation endpoints
+-no-solgen                  Disable Solidity generation endpoints
 -compile path/to/file.btw   Compile .btw file to JSON schema on stdout
 ```
 
@@ -50,6 +50,8 @@ make test             # Run tests
 - `GET /api/templates` — list ERC templates
 - `GET /api/templates/{id}` — get full template model
 - `POST /api/solgen` — generate Solidity from template ID
+- `POST /api/testgen` — generate Foundry tests from template ID
+- `POST /api/genesisgen` — generate Foundry genesis script from template ID
 - `POST /api/compile` — compile .btw DSL source to schema JSON
 - `GET /api/circuits` — list available ZK circuits
 - `POST /api/prove` — submit witness for ZK proof generation

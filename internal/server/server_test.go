@@ -19,7 +19,7 @@ func testServer(t *testing.T) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(s, pub, Options{})
+	return New(s, pub, Options{EnableSolidity: true})
 }
 
 func TestGetIndex(t *testing.T) {

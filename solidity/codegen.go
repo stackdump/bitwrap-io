@@ -391,11 +391,6 @@ func (g *generator) inferFunctionParamsWithBody(action metamodel.Action, inputs,
 	return g.formatParams(params)
 }
 
-func (g *generator) inferFunctionParams(action metamodel.Action) string {
-	params := g.collectFunctionParams(action)
-	return g.formatParams(params)
-}
-
 func (g *generator) collectFunctionParams(action metamodel.Action) map[string]string {
 	params := make(map[string]string)
 

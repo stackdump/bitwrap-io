@@ -76,7 +76,23 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(r.URL.Path, "/api/templates/"):
 		s.handleTemplate(w, r)
 	case r.URL.Path == "/api/solgen" && r.Method == http.MethodPost:
+		if !s.opts.EnableSolidity {
+			http.Error(w, "Solidity generation is disabled (start with -solgen flag)", http.StatusServiceUnavailable)
+			return
+		}
 		s.handleSolGen(w, r)
+	case r.URL.Path == "/api/testgen" && r.Method == http.MethodPost:
+		if !s.opts.EnableSolidity {
+			http.Error(w, "Solidity generation is disabled (start with -solgen flag)", http.StatusServiceUnavailable)
+			return
+		}
+		s.handleTestGen(w, r)
+	case r.URL.Path == "/api/genesisgen" && r.Method == http.MethodPost:
+		if !s.opts.EnableSolidity {
+			http.Error(w, "Solidity generation is disabled (start with -solgen flag)", http.StatusServiceUnavailable)
+			return
+		}
+		s.handleGenesisGen(w, r)
 	case r.URL.Path == "/api/prove" && r.Method == http.MethodPost:
 		s.handleProve(w, r)
 	case r.URL.Path == "/api/circuits":
@@ -326,6 +342,75 @@ func (s *Server) handleSolGen(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// handleTestGen generates Foundry tests from an ERC template.
+func (s *Server) handleTestGen(w http.ResponseWriter, r *http.Request) {
+	var req solgenRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	if req.Template == "" {
+		http.Error(w, "template field required", http.StatusBadRequest)
+		return
+	}
+
+	tmpl := s.getTemplate(req.Template)
+	if tmpl == nil {
+		http.Error(w, fmt.Sprintf("Unknown template: %s", req.Template), http.StatusBadRequest)
+		return
+	}
+
+	code := solidity.GenerateTests(tmpl.Schema())
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"name":     tmpl.Metadata().Name,
+		"filename": tmpl.Schema().Name + "Test.t.sol",
+		"solidity": code,
+	})
+}
+
+// handleGenesisGen generates a Foundry genesis deployment script from an ERC template.
+func (s *Server) handleGenesisGen(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Template string                 `json:"template"`
+		Actions  []solidity.GenesisAction `json:"actions"`
+		Epochs   int                    `json:"epochs"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	if req.Template == "" {
+		http.Error(w, "template field required", http.StatusBadRequest)
+		return
+	}
+
+	tmpl := s.getTemplate(req.Template)
+	if tmpl == nil {
+		http.Error(w, fmt.Sprintf("Unknown template: %s", req.Template), http.StatusBadRequest)
+		return
+	}
+
+	config := solidity.GenesisConfig{
+		Actions:     req.Actions,
+		TotalEpochs: req.Epochs,
+	}
+	schemaName := tmpl.Schema().Name
+	code := solidity.GenerateGenesis(schemaName, config, solidity.DefaultAddresses())
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"name":     tmpl.Metadata().Name,
+		"filename": schemaName + "Genesis.s.sol",
+		"solidity": code,
+	})
 }
 
 // handleTemplate returns a specific template as a full Petri net JSON-LD model.

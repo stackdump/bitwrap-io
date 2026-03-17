@@ -170,10 +170,52 @@ func (g *testGenerator) generateInvariantFunction(c metamodel.Constraint) string
 
 	b.WriteString(fmt.Sprintf("    /// @dev Invariant: %s\n", c.Expr))
 	b.WriteString(fmt.Sprintf("    function invariant_%s() public view {\n", c.ID))
-	b.WriteString(fmt.Sprintf("        // TODO: implement check for: %s\n", c.Expr))
+
+	// Translate constraint expression to Solidity assertion
+	solExpr := translateConstraintExpr(c.Expr, g.schema)
+	if solExpr != "" {
+		b.WriteString(fmt.Sprintf("        assertTrue(%s, \"%s\");\n", solExpr, c.ID))
+	} else {
+		b.WriteString(fmt.Sprintf("        // Complex constraint — verify manually: %s\n", c.Expr))
+	}
+
 	b.WriteString("    }\n\n")
 
 	return b.String()
+}
+
+// translateConstraintExpr converts a metamodel constraint expression to Solidity.
+// Handles common patterns like "sum(X) == Y", "sum(X) + Y == Z", "forall id: ...".
+func translateConstraintExpr(expr string, schema *metamodel.Schema) string {
+	expr = strings.TrimSpace(expr)
+
+	// "forall" constraints are too complex for direct translation
+	if strings.HasPrefix(expr, "forall") {
+		return ""
+	}
+
+	// Replace sum("field") with a helper call pattern
+	// sum("balances") → sumBalances()
+	result := expr
+	for _, state := range schema.States {
+		sumPattern := fmt.Sprintf(`sum("%s")`, state.ID)
+		if strings.Contains(result, sumPattern) {
+			// For map types, sum requires iteration — can't inline in Solidity view
+			// Use a placeholder that the developer implements
+			return ""
+		}
+	}
+
+	// Simple equality expressions: "X == Y" where X and Y are state vars
+	// Convert to Solidity: token.X() == token.Y()
+	if strings.Contains(result, "==") {
+		parts := strings.SplitN(result, "==", 2)
+		left := strings.TrimSpace(parts[0])
+		right := strings.TrimSpace(parts[1])
+		return fmt.Sprintf("token.%s() == token.%s()", left, right)
+	}
+
+	return ""
 }
 
 func (g *testGenerator) inferTestParams(action metamodel.Action) string {

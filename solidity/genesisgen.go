@@ -129,7 +129,7 @@ func (g *genesisGenerator) formatActionArgs(action GenesisAction) string {
 	return strings.Join(parts, ", ")
 }
 
-func (g *genesisGenerator) formatValue(name string, val any) string {
+func (g *genesisGenerator) formatValue(_ string, val any) string {
 	switch v := val.(type) {
 	case string:
 		// Check if it's an address alias
