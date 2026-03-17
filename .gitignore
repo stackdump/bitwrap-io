@@ -1,0 +1,6 @@
+bitwrap
+data/
+*.exe
+.DS_Store
+public
+.claude/

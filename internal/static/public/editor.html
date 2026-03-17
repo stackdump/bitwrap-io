@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" name="viewport"/>
+    <title>bitwrap - Editor</title>
+    <link href="petri-view.css" rel="stylesheet"/>
+    <link href="bitwrap.css" rel="stylesheet"/>
+    <script src="petri-view.js" type="module"></script>
+    <style>
+        html, body {
+            overflow: hidden;
+            height: 100%;
+        }
+    </style>
+</head>
+<body>
+
+<a class="editor-home" href="/">bitwrap</a>
+
+<div class="editor-toolbar">
+    <button class="toolbar-btn" id="btn-save" title="Save model">Save</button>
+    <button class="toolbar-btn" id="btn-solgen" title="Generate Solidity">Solidity</button>
+    <button class="toolbar-btn" id="btn-prove" title="Generate ZK Proof">ZK Proof</button>
+    <button class="toolbar-btn" id="btn-templates" title="Load template">Templates</button>
+</div>
+
+<petri-view
+    data-json-editor
+    data-backend>
+<script type="application/ld+json">
+{
+    "@context": "https://pflow.xyz/schema",
+    "@type": "PetriNet",
+    "@version": "1.1",
+    "arcs": [
+        {
+            "@type": "Arrow",
+            "inhibitTransition": false,
+            "source": "txn0",
+            "target": "place0",
+            "weight": [1]
+        },
+        {
+            "@type": "Arrow",
+            "inhibitTransition": false,
+            "source": "place0",
+            "target": "txn1",
+            "weight": [3]
+        },
+        {
+            "@type": "Arrow",
+            "inhibitTransition": true,
+            "source": "txn2",
+            "target": "place0",
+            "weight": [3]
+        },
+        {
+            "@type": "Arrow",
+            "inhibitTransition": true,
+            "source": "place0",
+            "target": "txn3",
+            "weight": [1]
+        }
+    ],
+    "places": {
+        "place0": {
+            "@type": "Place",
+            "capacity": [3],
+            "initial": [1],
+            "offset": 0,
+            "x": 130,
+            "y": 207
+        }
+    },
+    "token": ["https://pflow.xyz/tokens/black"],
+    "transitions": {
+        "txn0": { "@type": "Transition", "x": 46, "y": 116 },
+        "txn1": { "@type": "Transition", "x": 227, "y": 112 },
+        "txn2": { "@type": "Transition", "x": 43, "y": 307 },
+        "txn3": { "@type": "Transition", "x": 235, "y": 306 }
+    }
+}
+</script>
+</petri-view>
+
+<script src="bitwrap.js" type="module"></script>
+
+</body>
+</html>

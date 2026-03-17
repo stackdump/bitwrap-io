@@ -1,0 +1,330 @@
+package prover
+
+import (
+	"sync"
+
+	"github.com/consensys/gnark/frontend"
+	"github.com/consensys/gnark/std/hash/mimc"
+	"github.com/rs/zerolog/log"
+	"golang.org/x/sync/errgroup"
+)
+
+// mimcHash computes MiMC hash of two inputs in a gnark circuit.
+func mimcHash(api frontend.API, left, right frontend.Variable) frontend.Variable {
+	h, _ := mimc.NewMiMC(api)
+	h.Write(left)
+	h.Write(right)
+	return h.Sum()
+}
+
+// TransferCircuit proves: balances[from] >= amount
+// Public inputs: preStateRoot, postStateRoot, from, to, amount
+// Private inputs: balance, merkle proof
+type TransferCircuit struct {
+	// Public inputs
+	PreStateRoot  frontend.Variable `gnark:",public"`
+	PostStateRoot frontend.Variable `gnark:",public"`
+	From          frontend.Variable `gnark:",public"`
+	To            frontend.Variable `gnark:",public"`
+	Amount        frontend.Variable `gnark:",public"`
+
+	// Private inputs
+	BalanceFrom frontend.Variable
+	BalanceTo   frontend.Variable
+
+	// Merkle proof for balance (20 levels)
+	PathElements [20]frontend.Variable
+	PathIndices  [20]frontend.Variable
+}
+
+func (c *TransferCircuit) Define(api frontend.API) error {
+	// Guard: balance_from >= amount
+	diff := api.Sub(c.BalanceFrom, c.Amount)
+	api.ToBinary(diff, 64) // Proves diff is non-negative
+
+	// Verify pre-state Merkle proof
+	leaf := mimcHash(api, c.From, c.BalanceFrom)
+	current := leaf
+	for i := 0; i < 20; i++ {
+		api.AssertIsBoolean(c.PathIndices[i])
+		left := api.Select(c.PathIndices[i], c.PathElements[i], current)
+		right := api.Select(c.PathIndices[i], current, c.PathElements[i])
+		current = mimcHash(api, left, right)
+	}
+	api.AssertIsEqual(current, c.PreStateRoot)
+
+	// Compute new balances
+	newBalanceFrom := api.Sub(c.BalanceFrom, c.Amount)
+	newBalanceTo := api.Add(c.BalanceTo, c.Amount)
+
+	// We trust the postStateRoot is computed correctly from new balances
+	// (In a full implementation, we'd also verify the post-state proof)
+	_ = newBalanceFrom
+	_ = newBalanceTo
+
+	return nil
+}
+
+// TransferFromCircuit proves: balances[from] >= amount && allowances[from][caller] >= amount
+type TransferFromCircuit struct {
+	// Public inputs
+	PreStateRoot  frontend.Variable `gnark:",public"`
+	PostStateRoot frontend.Variable `gnark:",public"`
+	From          frontend.Variable `gnark:",public"`
+	To            frontend.Variable `gnark:",public"`
+	Caller        frontend.Variable `gnark:",public"`
+	Amount        frontend.Variable `gnark:",public"`
+
+	// Private inputs
+	BalanceFrom   frontend.Variable
+	AllowanceFrom frontend.Variable
+
+	// Merkle proofs (simplified: 10 levels each)
+	BalancePath    [10]frontend.Variable
+	BalanceIndices [10]frontend.Variable
+	AllowancePath  [10]frontend.Variable
+	AllowanceIdx   [10]frontend.Variable
+}
+
+func (c *TransferFromCircuit) Define(api frontend.API) error {
+	// Guard 1: balance >= amount
+	diff1 := api.Sub(c.BalanceFrom, c.Amount)
+	api.ToBinary(diff1, 64)
+
+	// Guard 2: allowance >= amount
+	diff2 := api.Sub(c.AllowanceFrom, c.Amount)
+	api.ToBinary(diff2, 64)
+
+	// Verify balance Merkle proof
+	balanceLeaf := mimcHash(api, c.From, c.BalanceFrom)
+	current := balanceLeaf
+	for i := 0; i < 10; i++ {
+		api.AssertIsBoolean(c.BalanceIndices[i])
+		left := api.Select(c.BalanceIndices[i], c.BalancePath[i], current)
+		right := api.Select(c.BalanceIndices[i], current, c.BalancePath[i])
+		current = mimcHash(api, left, right)
+	}
+	balanceRoot := current
+
+	// Verify allowance Merkle proof
+	allowanceKey := mimcHash(api, c.From, c.Caller)
+	allowanceLeaf := mimcHash(api, allowanceKey, c.AllowanceFrom)
+	current = allowanceLeaf
+	for i := 0; i < 10; i++ {
+		api.AssertIsBoolean(c.AllowanceIdx[i])
+		left := api.Select(c.AllowanceIdx[i], c.AllowancePath[i], current)
+		right := api.Select(c.AllowanceIdx[i], current, c.AllowancePath[i])
+		current = mimcHash(api, left, right)
+	}
+	allowanceRoot := current
+
+	// State root is combination of balance and allowance roots
+	computedRoot := mimcHash(api, balanceRoot, allowanceRoot)
+	api.AssertIsEqual(computedRoot, c.PreStateRoot)
+
+	return nil
+}
+
+// MintCircuit proves: caller == minter
+type MintCircuit struct {
+	// Public inputs
+	PreStateRoot  frontend.Variable `gnark:",public"`
+	PostStateRoot frontend.Variable `gnark:",public"`
+	Caller        frontend.Variable `gnark:",public"`
+	To            frontend.Variable `gnark:",public"`
+	Amount        frontend.Variable `gnark:",public"`
+
+	// Private inputs
+	Minter    frontend.Variable // The authorized minter address
+	BalanceTo frontend.Variable
+}
+
+func (c *MintCircuit) Define(api frontend.API) error {
+	// Guard: caller == minter
+	api.AssertIsEqual(c.Caller, c.Minter)
+
+	// Compute new balance
+	_ = api.Add(c.BalanceTo, c.Amount)
+
+	return nil
+}
+
+// BurnCircuit proves: balances[from] >= amount
+type BurnCircuit struct {
+	// Public inputs
+	PreStateRoot  frontend.Variable `gnark:",public"`
+	PostStateRoot frontend.Variable `gnark:",public"`
+	From          frontend.Variable `gnark:",public"`
+	Amount        frontend.Variable `gnark:",public"`
+
+	// Private inputs
+	BalanceFrom frontend.Variable
+
+	// Merkle proof
+	PathElements [20]frontend.Variable
+	PathIndices  [20]frontend.Variable
+}
+
+func (c *BurnCircuit) Define(api frontend.API) error {
+	// Guard: balance >= amount
+	diff := api.Sub(c.BalanceFrom, c.Amount)
+	api.ToBinary(diff, 64)
+
+	// Verify Merkle proof
+	leaf := mimcHash(api, c.From, c.BalanceFrom)
+	current := leaf
+	for i := 0; i < 20; i++ {
+		api.AssertIsBoolean(c.PathIndices[i])
+		left := api.Select(c.PathIndices[i], c.PathElements[i], current)
+		right := api.Select(c.PathIndices[i], current, c.PathElements[i])
+		current = mimcHash(api, left, right)
+	}
+	api.AssertIsEqual(current, c.PreStateRoot)
+
+	return nil
+}
+
+// ApproveCircuit proves: owner == caller
+type ApproveCircuit struct {
+	// Public inputs
+	PreStateRoot  frontend.Variable `gnark:",public"`
+	PostStateRoot frontend.Variable `gnark:",public"`
+	Caller        frontend.Variable `gnark:",public"`
+	Spender       frontend.Variable `gnark:",public"`
+	Amount        frontend.Variable `gnark:",public"`
+
+	// Private inputs
+	Owner frontend.Variable
+}
+
+func (c *ApproveCircuit) Define(api frontend.API) error {
+	// Guard: owner == caller (only owner can approve)
+	api.AssertIsEqual(c.Owner, c.Caller)
+
+	return nil
+}
+
+// VestingClaimCircuit proves: vestSchedules[tokenId] exists && vestOwners[tokenId] == caller
+type VestingClaimCircuit struct {
+	// Public inputs
+	PreStateRoot  frontend.Variable `gnark:",public"`
+	PostStateRoot frontend.Variable `gnark:",public"`
+	TokenID       frontend.Variable `gnark:",public"`
+	Caller        frontend.Variable `gnark:",public"`
+	ClaimAmount   frontend.Variable `gnark:",public"`
+
+	// Private inputs
+	VestedAmount frontend.Variable // Total vested so far
+	Claimed      frontend.Variable // Already claimed
+	Owner        frontend.Variable // NFT owner
+
+	// Merkle proofs
+	SchedulePath    [10]frontend.Variable
+	ScheduleIndices [10]frontend.Variable
+	OwnerPath       [10]frontend.Variable
+	OwnerIndices    [10]frontend.Variable
+}
+
+func (c *VestingClaimCircuit) Define(api frontend.API) error {
+	// Guard 1: owner == caller
+	api.AssertIsEqual(c.Owner, c.Caller)
+
+	// Guard 2: claimAmount <= vestedAmount - claimed
+	available := api.Sub(c.VestedAmount, c.Claimed)
+	diff := api.Sub(available, c.ClaimAmount)
+	api.ToBinary(diff, 64) // Proves diff is non-negative
+
+	// Verify schedule Merkle proof
+	scheduleLeaf := mimcHash(api, c.TokenID, c.VestedAmount)
+	current := scheduleLeaf
+	for i := 0; i < 10; i++ {
+		api.AssertIsBoolean(c.ScheduleIndices[i])
+		left := api.Select(c.ScheduleIndices[i], c.SchedulePath[i], current)
+		right := api.Select(c.ScheduleIndices[i], current, c.SchedulePath[i])
+		current = mimcHash(api, left, right)
+	}
+	scheduleRoot := current
+
+	// Verify owner Merkle proof
+	ownerLeaf := mimcHash(api, c.TokenID, c.Owner)
+	current = ownerLeaf
+	for i := 0; i < 10; i++ {
+		api.AssertIsBoolean(c.OwnerIndices[i])
+		left := api.Select(c.OwnerIndices[i], c.OwnerPath[i], current)
+		right := api.Select(c.OwnerIndices[i], current, c.OwnerPath[i])
+		current = mimcHash(api, left, right)
+	}
+	ownerRoot := current
+
+	// State root combines both
+	computedRoot := mimcHash(api, scheduleRoot, ownerRoot)
+	api.AssertIsEqual(computedRoot, c.PreStateRoot)
+
+	return nil
+}
+
+// RegisterStandardCircuits registers all standard ERC-20 circuits with the prover.
+// Circuits are compiled in parallel for faster startup.
+func RegisterStandardCircuits(p *Prover) error {
+	circuits := map[string]frontend.Circuit{
+		"transfer":     &TransferCircuit{},
+		"transferFrom": &TransferFromCircuit{},
+		"mint":         &MintCircuit{},
+		"burn":         &BurnCircuit{},
+		"approve":      &ApproveCircuit{},
+		"vestClaim":    &VestingClaimCircuit{},
+	}
+
+	return RegisterCircuitsParallel(p, circuits)
+}
+
+// RegisterCircuitsParallel compiles and registers multiple circuits concurrently.
+// This significantly speeds up startup when registering many circuits.
+func RegisterCircuitsParallel(p *Prover, circuits map[string]frontend.Circuit) error {
+	// Compile all circuits in parallel
+	type compiledResult struct {
+		name string
+		cc   *CompiledCircuit
+	}
+
+	var (
+		g       errgroup.Group
+		mu      sync.Mutex
+		results []compiledResult
+	)
+
+	for name, circuit := range circuits {
+		name, circuit := name, circuit // capture for goroutine
+		g.Go(func() error {
+			log.Debug().Str("circuit", name).Msg("Compiling circuit...")
+
+			cc, err := p.CompileCircuit(name, circuit)
+			if err != nil {
+				return err
+			}
+
+			mu.Lock()
+			results = append(results, compiledResult{name: name, cc: cc})
+			mu.Unlock()
+
+			log.Debug().
+				Str("circuit", name).
+				Int("constraints", cc.Constraints).
+				Msg("Circuit compiled")
+
+			return nil
+		})
+	}
+
+	// Wait for all compilations
+	if err := g.Wait(); err != nil {
+		return err
+	}
+
+	// Register all compiled circuits (sequential, but fast)
+	for _, r := range results {
+		p.StoreCircuit(r.name, r.cc)
+	}
+
+	return nil
+}

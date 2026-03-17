@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1" name="viewport"/>
+    <title>bitwrap - Petri Nets as ZK Containers</title>
+    <meta name="description" content="Model state machines as Petri nets, generate ZK proofs and Solidity contracts. Verifiable execution from visual models."/>
+    <link href="bitwrap.css" rel="stylesheet"/>
+</head>
+<body>
+
+<div id="landing">
+    <nav class="nav">
+        <a href="/" class="nav-brand">bitwrap</a>
+        <div class="nav-links">
+            <a href="/editor">Editor</a>
+            <a href="https://book.pflow.xyz">Docs</a>
+            <a href="https://github.com/bitwrap-io">GitHub</a>
+        </div>
+    </nav>
+
+    <section class="hero">
+        <div class="hero-content">
+            <h1>Petri Nets as ZK Containers</h1>
+            <p>Model state machines visually. Generate ZK proofs and Solidity contracts. Every transition firing produces a cryptographic proof of valid state change.</p>
+            <div class="hero-buttons">
+                <a class="btn-primary" href="/editor">Open Editor</a>
+                <a class="btn-secondary" href="#how-it-works">How It Works</a>
+            </div>
+        </div>
+    </section>
+
+    <section class="section" id="how-it-works">
+        <h2>Model &rarr; Prove &rarr; Deploy</h2>
+        <p class="section-sub">One Petri net flows through the entire stack.</p>
+        <div class="grid-3">
+            <div class="card">
+                <div class="card-icon">
+                    <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+                        <circle cx="14" cy="14" r="10" stroke="var(--accent)" stroke-width="2" fill="none"/>
+                        <circle cx="14" cy="14" r="3" fill="var(--accent)"/>
+                        <rect x="30" y="8" width="12" height="12" stroke="var(--accent)" stroke-width="2" fill="none"/>
+                        <line x1="24" y1="14" x2="30" y2="14" stroke="var(--accent)" stroke-width="2"/>
+                        <line x1="36" y1="20" x2="36" y2="28" stroke="var(--accent)" stroke-width="2"/>
+                        <circle cx="14" cy="38" r="10" stroke="var(--accent)" stroke-width="2" fill="none"/>
+                        <line x1="36" y1="28" x2="24" y2="38" stroke="var(--accent)" stroke-width="2"/>
+                    </svg>
+                </div>
+                <h3>Model</h3>
+                <p>Draw places, transitions, and arcs in the visual editor. The model is a directed bipartite graph stored as JSON-LD with content-addressed identity.</p>
+            </div>
+            <div class="card">
+                <div class="card-icon">
+                    <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+                        <path d="M24 4L42 14V34L24 44L6 34V14L24 4Z" stroke="var(--accent)" stroke-width="2" fill="none"/>
+                        <path d="M24 16L32 21V31L24 36L16 31V21L24 16Z" stroke="var(--accent)" stroke-width="1.5" fill="none"/>
+                        <circle cx="24" cy="26" r="3" fill="var(--accent)"/>
+                    </svg>
+                </div>
+                <h3>Prove</h3>
+                <p>Guards become arithmetic constraints. Arc weights become balance checks. Invariants become circuit assertions. Groth16 proofs from net topology.</p>
+            </div>
+            <div class="card">
+                <div class="card-icon">
+                    <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+                        <rect x="4" y="6" width="40" height="30" rx="2" stroke="var(--accent)" stroke-width="2" fill="none"/>
+                        <line x1="10" y1="14" x2="22" y2="14" stroke="var(--accent)" stroke-width="2"/>
+                        <line x1="10" y1="20" x2="32" y2="20" stroke="var(--accent)" stroke-width="2"/>
+                        <line x1="10" y1="26" x2="28" y2="26" stroke="var(--accent)" stroke-width="2"/>
+                        <path d="M24 42L20 38H28L24 42Z" fill="var(--accent)"/>
+                        <line x1="24" y1="36" x2="24" y2="39" stroke="var(--accent)" stroke-width="2"/>
+                    </svg>
+                </div>
+                <h3>Deploy</h3>
+                <p>Generate Solidity contracts from ERC templates. Each token standard is a Petri net &mdash; the same model that produced the proof produces the contract.</p>
+            </div>
+        </div>
+    </section>
+
+    <section class="section">
+        <h2>ZK Container Templates</h2>
+        <p class="section-sub">Start from a token standard. Customize the Petri net. Generate everything.</p>
+        <div class="grid-4" id="template-cards">
+            <div class="template-card" data-template="erc20">
+                <div class="template-badge">ERC-20</div>
+                <h3>Fungible Token</h3>
+                <p>Transfer, approve, mint, burn &mdash; five transitions, three places, conservation law built in.</p>
+            </div>
+            <div class="template-card" data-template="erc721">
+                <div class="template-badge">ERC-721</div>
+                <h3>Non-Fungible Token</h3>
+                <p>Ownership tracking, approval, safe transfer &mdash; each token ID is a unique state.</p>
+            </div>
+            <div class="template-card" data-template="erc1155">
+                <div class="template-badge">ERC-1155</div>
+                <h3>Multi Token</h3>
+                <p>Fungible and non-fungible in one contract. Batch operations, operator approvals.</p>
+            </div>
+            <div class="template-card" data-template="erc4626">
+                <div class="template-badge">ERC-4626</div>
+                <h3>Tokenized Vault</h3>
+                <p>Deposit, withdraw, yield distribution &mdash; share accounting as token flow.</p>
+            </div>
+        </div>
+    </section>
+
+    <section class="section section-dark">
+        <h2>Two Angles, One Abstraction</h2>
+        <div class="grid-2">
+            <div class="angle-card">
+                <h3>Model &rarr; Proof</h3>
+                <p>Petri net structure maps directly to ZK circuit constraints. Guards become arithmetic checks, arc weights become balance checks, invariants become assertions. The model <em>is</em> the specification.</p>
+            </div>
+            <div class="angle-card">
+                <h3>Verifiable Execution</h3>
+                <p>Run a Petri net state machine where each transition firing produces a Groth16 proof. The proof attests that the state change was valid without revealing the full state. The model becomes its own audit trail.</p>
+            </div>
+        </div>
+    </section>
+
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-links">
+                <a href="/editor">Editor</a>
+                <a href="https://book.pflow.xyz">Documentation</a>
+                <a href="https://github.com/bitwrap-io">GitHub</a>
+                <a href="https://blog.stackdump.com">Blog</a>
+            </div>
+            <span class="footer-copy">&copy; bitwrap.io</span>
+        </div>
+    </footer>
+</div>
+
+</body>
+</html>
