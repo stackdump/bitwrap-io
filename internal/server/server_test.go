@@ -211,26 +211,33 @@ func TestCircuits(t *testing.T) {
 	}
 }
 
-func TestProve(t *testing.T) {
-	srv := testServer(t)
+func TestProveDisabled(t *testing.T) {
+	srv := testServer(t) // prover not enabled
 	body := `{"circuit":"transfer","witness":{"from":"0x1","to":"0x2","amount":"100","preStateRoot":"0","postStateRoot":"0","balanceFrom":"1000","balanceTo":"0","pathElement0":"0","pathIndex0":"0","pathElement1":"0","pathIndex1":"0","pathElement2":"0","pathIndex2":"0","pathElement3":"0","pathIndex3":"0","pathElement4":"0","pathIndex4":"0","pathElement5":"0","pathIndex5":"0","pathElement6":"0","pathIndex6":"0","pathElement7":"0","pathIndex7":"0","pathElement8":"0","pathIndex8":"0","pathElement9":"0","pathIndex9":"0","pathElement10":"0","pathIndex10":"0","pathElement11":"0","pathIndex11":"0","pathElement12":"0","pathIndex12":"0","pathElement13":"0","pathIndex13":"0","pathElement14":"0","pathIndex14":"0","pathElement15":"0","pathIndex15":"0","pathElement16":"0","pathIndex16":"0","pathElement17":"0","pathIndex17":"0","pathElement18":"0","pathIndex18":"0","pathElement19":"0","pathIndex19":"0"}}`
 	req := httptest.NewRequest("POST", "/api/prove", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, req)
-	if w.Code != 200 {
-		t.Fatalf("POST /api/prove = %d: %s", w.Code, w.Body.String())
-	}
-	var resp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["circuit"] != "transfer" {
-		t.Fatalf("expected circuit=transfer, got %v", resp["circuit"])
+	if w.Code != 503 {
+		t.Fatalf("POST /api/prove with disabled prover = %d, want 503: %s", w.Code, w.Body.String())
 	}
 }
 
 func TestProveUnknownCircuit(t *testing.T) {
-	srv := testServer(t)
+	srv := testServer(t) // prover not enabled
 	body := `{"circuit":"unknown","witness":{"x":"1"}}`
+	req := httptest.NewRequest("POST", "/api/prove", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != 400 {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestProveMissingWitness(t *testing.T) {
+	srv := testServer(t)
+	body := `{"circuit":"transfer"}`
 	req := httptest.NewRequest("POST", "/api/prove", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()

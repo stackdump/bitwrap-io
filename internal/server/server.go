@@ -9,12 +9,14 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/stackdump/bitwrap-io/dsl"
 	"github.com/stackdump/bitwrap-io/erc"
 	"github.com/stackdump/bitwrap-io/internal/seal"
 	"github.com/stackdump/bitwrap-io/internal/store"
 	"github.com/stackdump/bitwrap-io/internal/svg"
+	"github.com/stackdump/bitwrap-io/prover"
 	"github.com/stackdump/bitwrap-io/solidity"
 )
 
@@ -26,14 +28,27 @@ type Options struct {
 
 // Server is the bitwrap HTTP server.
 type Server struct {
-	store    *store.FSStore
-	publicFS fs.FS
-	opts     Options
+	store      *store.FSStore
+	publicFS   fs.FS
+	opts       Options
+	proverSvc  *prover.Service
 }
 
 // New creates a new server.
 func New(s *store.FSStore, publicFS fs.FS, opts Options) *Server {
-	return &Server{store: s, publicFS: publicFS, opts: opts}
+	srv := &Server{store: s, publicFS: publicFS, opts: opts}
+	if opts.EnableProver {
+		log.Printf("Initializing ZK prover (compiling circuits)...")
+		start := time.Now()
+		svc, err := prover.NewArcnetService()
+		if err != nil {
+			log.Printf("WARNING: ZK prover initialization failed: %v", err)
+		} else {
+			srv.proverSvc = svc
+			log.Printf("ZK prover ready (%d circuits compiled in %v)", len(svc.Prover().ListCircuits()), time.Since(start))
+		}
+	}
+	return srv
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -376,46 +391,120 @@ func (s *Server) handleProve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Available circuits from prover package
-	knownCircuits := []string{"transfer", "transferFrom", "mint", "burn", "approve", "vestClaim"}
-	found := false
-	for _, c := range knownCircuits {
-		if c == req.Circuit {
-			found = true
-			break
-		}
-	}
-	if !found {
-		http.Error(w, fmt.Sprintf("Unknown circuit: %s. Available: %v", req.Circuit, knownCircuits), http.StatusBadRequest)
-		return
-	}
-
 	if len(req.Witness) == 0 {
 		http.Error(w, "witness field required (map of field name to value)", http.StatusBadRequest)
 		return
 	}
 
-	// Return proof metadata — full proving requires gnark setup which is heavy.
-	// In production, this would call prover.NewArcnetService() and generate real proofs.
+	// If prover is not initialized, return error
+	if s.proverSvc == nil {
+		// Validate circuit name against known list for a helpful error
+		knownCircuits := []string{"transfer", "transferFrom", "mint", "burn", "approve", "vestClaim"}
+		found := false
+		for _, c := range knownCircuits {
+			if c == req.Circuit {
+				found = true
+				break
+			}
+		}
+		if !found {
+			http.Error(w, fmt.Sprintf("Unknown circuit: %s. Available: %v", req.Circuit, knownCircuits), http.StatusBadRequest)
+			return
+		}
+		http.Error(w, "ZK prover is disabled (server started with -no-prover)", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Validate circuit exists in the compiled prover
+	p := s.proverSvc.Prover()
+	if _, ok := p.GetCircuit(req.Circuit); !ok {
+		http.Error(w, fmt.Sprintf("Unknown circuit: %s. Available: %v", req.Circuit, p.ListCircuits()), http.StatusBadRequest)
+		return
+	}
+
+	// Create circuit assignment from witness
+	factory := &prover.ArcnetWitnessFactory{}
+	assignment, err := factory.CreateAssignment(req.Circuit, req.Witness)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":   fmt.Sprintf("witness error: %v", err),
+			"circuit": req.Circuit,
+		})
+		return
+	}
+
+	// Generate Groth16 proof
+	start := time.Now()
+	proof, err := p.Prove(req.Circuit, assignment)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":        fmt.Sprintf("proof generation failed: %v", err),
+			"circuit":      req.Circuit,
+			"proof_time_ms": elapsed.Milliseconds(),
+		})
+		return
+	}
+
+	log.Printf("Proof generated: circuit=%s constraints=%d elapsed=%v", req.Circuit, proof.Constraints, elapsed)
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":         "accepted",
-		"circuit":        req.Circuit,
-		"message":        "Proof generation queued. Full Groth16 proving requires circuit compilation (~30s startup).",
-		"witness_fields": len(req.Witness),
+		"proof":        proof,
+		"circuit":      req.Circuit,
+		"proof_time_ms": elapsed.Milliseconds(),
 	})
+}
+
+// circuitDescriptions provides human-readable descriptions for known circuits.
+var circuitDescriptions = map[string]struct {
+	description  string
+	publicInputs []string
+}{
+	"transfer":     {"ERC-20 transfer: proves balance >= amount", []string{"preStateRoot", "postStateRoot", "from", "to", "amount"}},
+	"transferFrom": {"ERC-20 delegated transfer: proves balance >= amount && allowance >= amount", []string{"preStateRoot", "postStateRoot", "from", "to", "caller", "amount"}},
+	"mint":         {"ERC-20 mint: proves caller == minter", []string{"preStateRoot", "postStateRoot", "caller", "to", "amount"}},
+	"burn":         {"ERC-20 burn: proves balance >= amount", []string{"preStateRoot", "postStateRoot", "from", "amount"}},
+	"approve":      {"ERC-20 approve: proves owner == caller", []string{"preStateRoot", "postStateRoot", "caller", "spender", "amount"}},
+	"vestClaim":    {"Vesting claim: proves ownership and available amount", []string{"preStateRoot", "postStateRoot", "tokenID", "caller", "claimAmount"}},
 }
 
 // handleCircuits lists available ZK circuits.
 func (s *Server) handleCircuits(w http.ResponseWriter, r *http.Request) {
-	circuits := []map[string]interface{}{
-		{"name": "transfer", "description": "ERC-20 transfer: proves balance >= amount", "public_inputs": []string{"preStateRoot", "postStateRoot", "from", "to", "amount"}},
-		{"name": "transferFrom", "description": "ERC-20 delegated transfer: proves balance >= amount && allowance >= amount", "public_inputs": []string{"preStateRoot", "postStateRoot", "from", "to", "caller", "amount"}},
-		{"name": "mint", "description": "ERC-20 mint: proves caller == minter", "public_inputs": []string{"preStateRoot", "postStateRoot", "caller", "to", "amount"}},
-		{"name": "burn", "description": "ERC-20 burn: proves balance >= amount", "public_inputs": []string{"preStateRoot", "postStateRoot", "from", "amount"}},
-		{"name": "approve", "description": "ERC-20 approve: proves owner == caller", "public_inputs": []string{"preStateRoot", "postStateRoot", "caller", "spender", "amount"}},
-		{"name": "vestClaim", "description": "Vesting claim: proves ownership and available amount", "public_inputs": []string{"preStateRoot", "postStateRoot", "tokenID", "caller", "claimAmount"}},
+	var circuits []map[string]interface{}
+
+	if s.proverSvc != nil {
+		// Use live circuit data from the prover
+		for _, name := range s.proverSvc.Prover().ListCircuits() {
+			entry := map[string]interface{}{"name": name, "status": "compiled"}
+			if cc, ok := s.proverSvc.Prover().GetCircuit(name); ok {
+				entry["constraints"] = cc.Constraints
+				entry["public_vars"] = cc.PublicVars
+				entry["private_vars"] = cc.PrivateVars
+			}
+			if desc, ok := circuitDescriptions[name]; ok {
+				entry["description"] = desc.description
+				entry["public_inputs"] = desc.publicInputs
+			}
+			circuits = append(circuits, entry)
+		}
+	} else {
+		// Fallback to static descriptions
+		for name, desc := range circuitDescriptions {
+			circuits = append(circuits, map[string]interface{}{
+				"name":          name,
+				"description":   desc.description,
+				"public_inputs": desc.publicInputs,
+				"status":        "disabled",
+			})
+		}
 	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"circuits": circuits})
 }
