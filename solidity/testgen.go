@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/bitwrap-io/bitwrap/internal/metamodel"
+	"github.com/stackdump/bitwrap-io/internal/metamodel"
 )
 
 // GenerateTests produces Foundry tests for a metamodel schema.

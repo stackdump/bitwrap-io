@@ -1,8 +1,8 @@
 package arc
 
 import (
-	"github.com/bitwrap-io/bitwrap/internal/metamodel/guard"
-	"github.com/bitwrap-io/bitwrap/internal/petri"
+	"github.com/stackdump/bitwrap-io/internal/metamodel/guard"
+	"github.com/stackdump/bitwrap-io/internal/petri"
 )
 
 // Marking represents the current token state of all places.

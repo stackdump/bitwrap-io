@@ -1,8 +1,8 @@
 package erc
 
 import (
-	"github.com/bitwrap-io/bitwrap/internal/arc"
-	"github.com/bitwrap-io/bitwrap/internal/metamodel"
+	"github.com/stackdump/bitwrap-io/internal/arc"
+	"github.com/stackdump/bitwrap-io/internal/metamodel"
 )
 
 // CombinedERC represents a unified token template with all ERC standards.

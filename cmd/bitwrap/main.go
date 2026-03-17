@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/bitwrap-io/bitwrap/dsl"
-	"github.com/bitwrap-io/bitwrap/internal/server"
-	"github.com/bitwrap-io/bitwrap/internal/static"
-	"github.com/bitwrap-io/bitwrap/internal/store"
+	"github.com/stackdump/bitwrap-io/dsl"
+	"github.com/stackdump/bitwrap-io/internal/server"
+	"github.com/stackdump/bitwrap-io/internal/static"
+	"github.com/stackdump/bitwrap-io/internal/store"
 )
 
 func main() {

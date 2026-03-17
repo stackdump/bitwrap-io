@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/bitwrap-io/bitwrap/internal/metamodel"
+	"github.com/stackdump/bitwrap-io/internal/metamodel"
 )
 
 // Generate produces a Solidity contract from a metamodel schema.

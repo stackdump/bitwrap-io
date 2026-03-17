@@ -1,11 +1,11 @@
 // Package arc implements Petri net primitives with cryptographic identity.
 // This is the "arc" in arcnet - the core wiring and flow semantics.
 //
-// Deprecated: Use github.com/bitwrap-io/bitwrap/internal/petri instead.
+// Deprecated: Use github.com/stackdump/bitwrap-io/internal/petri instead.
 // This package re-exports types for backward compatibility.
 package arc
 
-import "github.com/bitwrap-io/bitwrap/internal/petri"
+import "github.com/stackdump/bitwrap-io/internal/petri"
 
 // Place represents a state container in the Petri net.
 // Deprecated: Use petri.Place from metamodel/petri package.

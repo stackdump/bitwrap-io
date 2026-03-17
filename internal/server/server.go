@@ -10,12 +10,12 @@ import (
 	"os"
 	"strings"
 
-	"github.com/bitwrap-io/bitwrap/dsl"
-	"github.com/bitwrap-io/bitwrap/erc"
-	"github.com/bitwrap-io/bitwrap/internal/seal"
-	"github.com/bitwrap-io/bitwrap/internal/store"
-	"github.com/bitwrap-io/bitwrap/internal/svg"
-	"github.com/bitwrap-io/bitwrap/solidity"
+	"github.com/stackdump/bitwrap-io/dsl"
+	"github.com/stackdump/bitwrap-io/erc"
+	"github.com/stackdump/bitwrap-io/internal/seal"
+	"github.com/stackdump/bitwrap-io/internal/store"
+	"github.com/stackdump/bitwrap-io/internal/svg"
+	"github.com/stackdump/bitwrap-io/solidity"
 )
 
 // Options configures the server.

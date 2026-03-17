@@ -1,8 +1,8 @@
 package arc
 
 import (
-	"github.com/bitwrap-io/bitwrap/internal/metamodel"
-	"github.com/bitwrap-io/bitwrap/internal/petri"
+	"github.com/stackdump/bitwrap-io/internal/metamodel"
+	"github.com/stackdump/bitwrap-io/internal/petri"
 )
 
 // Type aliases for backward compatibility.

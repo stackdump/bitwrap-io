@@ -1,6 +1,6 @@
 package petri
 
-import "github.com/bitwrap-io/bitwrap/internal/metamodel"
+import "github.com/stackdump/bitwrap-io/internal/metamodel"
 
 // ToSchema converts a Petri net Model to a metamodel Schema.
 func (m *Model) ToSchema() *metamodel.Schema {

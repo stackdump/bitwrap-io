@@ -1,4 +1,4 @@
-module github.com/bitwrap-io/bitwrap
+module github.com/stackdump/bitwrap-io
 
 go 1.24.9
 

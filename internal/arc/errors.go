@@ -1,6 +1,6 @@
 package arc
 
-import "github.com/bitwrap-io/bitwrap/internal/petri"
+import "github.com/stackdump/bitwrap-io/internal/petri"
 
 // Model validation errors
 // Deprecated: Use errors from metamodel/petri package.

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/bitwrap-io/bitwrap/internal/metamodel/guard"
+	"github.com/stackdump/bitwrap-io/internal/metamodel/guard"
 )
 
 // GuardTranslator converts parsed guard ASTs to Solidity code.

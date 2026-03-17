@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bitwrap-io/bitwrap/internal/static"
-	"github.com/bitwrap-io/bitwrap/internal/store"
+	"github.com/stackdump/bitwrap-io/internal/static"
+	"github.com/stackdump/bitwrap-io/internal/store"
 )
 
 func testServer(t *testing.T) *Server {
