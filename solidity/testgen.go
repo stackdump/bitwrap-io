@@ -42,13 +42,13 @@ func (g *testGenerator) generate() string {
 		b.WriteString(g.generateActionTest(action))
 	}
 
-	b.WriteString(g.generateFuzzTests())
+	b.WriteString(g.generateRevertTests())
 	b.WriteString(g.generateViewTests())
-	b.WriteString(g.generateEpochTests())
 
-	b.WriteString("}\n\n")
+	b.WriteString("}\n")
 
 	if len(g.schema.Constraints) > 0 {
+		b.WriteString("\n")
 		b.WriteString(g.generateInvariantTests(contractName))
 	}
 
@@ -56,107 +56,233 @@ func (g *testGenerator) generate() string {
 }
 
 func (g *testGenerator) generateActionTest(action metamodel.Action) string {
-	return ""
+	var b strings.Builder
+
+	funcName := action.ID
+	params := g.inferTestParams(action)
+
+	b.WriteString(fmt.Sprintf("    function test_%s() public {\n", funcName))
+
+	// Setup: if action is privileged, prank as owner
+	if isPrivilegedAction(funcName) {
+		b.WriteString("        // Privileged action — called as contract owner\n")
+	} else {
+		b.WriteString("        vm.prank(alice);\n")
+	}
+
+	// If we need to mint first for transfer/burn/approve actions, add setup
+	if funcName == "transfer" || funcName == "burn" || funcName == "approve" || funcName == "transferFrom" {
+		b.WriteString("        // Setup: mint tokens first\n")
+		if g.hasAction("mint") {
+			b.WriteString("        token.mint(alice, 1000);\n")
+			b.WriteString("        vm.prank(alice);\n")
+		}
+	}
+
+	b.WriteString(fmt.Sprintf("        token.%s(%s);\n", funcName, params))
+	b.WriteString("    }\n\n")
+
+	return b.String()
 }
 
-func (g *testGenerator) generateFuzzTests() string {
-	return ""
+func (g *testGenerator) generateRevertTests() string {
+	var b strings.Builder
+
+	for _, action := range g.schema.Actions {
+		if action.Guard == "" {
+			continue
+		}
+
+		funcName := action.ID
+		b.WriteString(fmt.Sprintf("    function test_%s_reverts_on_invalid_guard() public {\n", funcName))
+		b.WriteString("        vm.expectRevert();\n")
+
+		if isPrivilegedAction(funcName) {
+			b.WriteString("        // Non-owner call should revert\n")
+			b.WriteString("        vm.prank(alice);\n")
+		} else {
+			b.WriteString("        vm.prank(charlie);\n")
+		}
+
+		// Call with zero/empty args to trigger guard failure
+		params := g.inferZeroParams(action)
+		b.WriteString(fmt.Sprintf("        token.%s(%s);\n", funcName, params))
+		b.WriteString("    }\n\n")
+	}
+
+	return b.String()
 }
 
 func (g *testGenerator) generateViewTests() string {
-	return ""
-}
+	var b strings.Builder
 
-func (g *testGenerator) generateEpochTests() string {
-	return ""
-}
-
-func (g *testGenerator) getFunctionParams(_ metamodel.Action) []string {
-	return nil
-}
-
-func (g *testGenerator) generateArcOperations(_ string) ([]string, []string) {
-	return nil, nil
-}
-
-func (g *testGenerator) getFunctionParamsByName(_ string) []string {
-	return nil
-}
-
-func (g *testGenerator) buildTestArgs(_ []string, _ string, _ string) string {
-	return ""
-}
-
-func (g *testGenerator) buildApproveArgs(_ []string) string {
-	return ""
-}
-
-func (g *testGenerator) buildTransferFromArgs(_ []string) string {
-	return ""
-}
-
-func (g *testGenerator) buildVaultDepositArgs(_ []string) string {
-	return ""
-}
-
-func (g *testGenerator) buildVestCreateArgs(_ []string) string {
-	return ""
-}
-
-func (g *testGenerator) buildVestCreateArgsRevocable(_ []string) string {
-	return ""
-}
-
-func (g *testGenerator) buildVestClaimArgs(_ []string, _ string) string {
-	return ""
-}
-
-func (g *testGenerator) buildVestRevokeArgs(_ []string) string {
-	return ""
-}
-
-func (g *testGenerator) buildTokenBurnArgs(_ []string) string {
-	return ""
-}
-
-func (g *testGenerator) generateInvariantTests(_ string) string {
-	return ""
-}
-
-func (g *testGenerator) generateHandlerFunctions(_ *strings.Builder) {
-}
-
-func (g *testGenerator) generateInvariantFunction(_ metamodel.Constraint) string {
-	return ""
-}
-
-func buildTestAccessor(stateID string, keys []string) string {
-	if len(keys) == 0 {
-		return stateID
+	hasExported := false
+	for _, state := range g.schema.States {
+		if state.Exported {
+			hasExported = true
+			break
+		}
 	}
-	accessor := stateID
-	for _, key := range keys {
-		accessor += fmt.Sprintf("[%s]", key)
-	}
-	return accessor
-}
 
-func isTestMapType(t string) bool {
-	return strings.HasPrefix(t, "map[")
-}
-
-func getTestMapValueType(mapType string) string {
-	idx := strings.Index(mapType, "]")
-	if idx == -1 {
+	if !hasExported {
 		return ""
 	}
-	inner := mapType[idx+1:]
-	if strings.HasPrefix(inner, "map[") {
-		return getTestMapValueType(inner)
+
+	b.WriteString("    function test_view_functions() public view {\n")
+	for _, state := range g.schema.States {
+		if !state.Exported {
+			continue
+		}
+		if strings.HasPrefix(state.Type, "map[") {
+			// Map types need a key argument
+			b.WriteString(fmt.Sprintf("        token.%s(alice);\n", state.ID))
+		} else {
+			b.WriteString(fmt.Sprintf("        token.%s();\n", state.ID))
+		}
 	}
-	return inner
+	b.WriteString("    }\n\n")
+
+	return b.String()
 }
 
-func extractBodyParamsFromCode(_, _ []string) map[string]bool {
-	return make(map[string]bool)
+func (g *testGenerator) generateInvariantTests(contractName string) string {
+	var b strings.Builder
+
+	b.WriteString(fmt.Sprintf("contract %sInvariantTest is Test {\n", contractName))
+	b.WriteString(fmt.Sprintf("    %s public token;\n\n", contractName))
+
+	b.WriteString("    function setUp() public {\n")
+	b.WriteString(fmt.Sprintf("        token = new %s();\n", contractName))
+	b.WriteString("        targetContract(address(token));\n")
+	b.WriteString("    }\n\n")
+
+	for _, c := range g.schema.Constraints {
+		b.WriteString(g.generateInvariantFunction(c))
+	}
+
+	b.WriteString("}\n")
+
+	return b.String()
 }
+
+func (g *testGenerator) generateInvariantFunction(c metamodel.Constraint) string {
+	var b strings.Builder
+
+	b.WriteString(fmt.Sprintf("    /// @dev Invariant: %s\n", c.Expr))
+	b.WriteString(fmt.Sprintf("    function invariant_%s() public view {\n", c.ID))
+	b.WriteString(fmt.Sprintf("        // TODO: implement check for: %s\n", c.Expr))
+	b.WriteString("    }\n\n")
+
+	return b.String()
+}
+
+func (g *testGenerator) inferTestParams(action metamodel.Action) string {
+	params := collectArcParams(g.schema, action.ID)
+
+	var parts []string
+	for _, name := range sortedParams(params) {
+		switch params[name] {
+		case "address":
+			if name == "to" || name == "beneficiary" || name == "receiver" {
+				parts = append(parts, "bob")
+			} else if name == "spender" || name == "operator" {
+				parts = append(parts, "charlie")
+			} else {
+				parts = append(parts, "alice")
+			}
+		case "uint256":
+			parts = append(parts, "100")
+		case "bool":
+			parts = append(parts, "true")
+		default:
+			parts = append(parts, "0")
+		}
+	}
+
+	// Add guard-extracted params
+	if action.Guard != "" {
+		guardParams := extractGuardParams(action.Guard)
+		for name := range guardParams {
+			if _, exists := params[name]; !exists {
+				parts = append(parts, "alice")
+			}
+		}
+	}
+
+	return strings.Join(parts, ", ")
+}
+
+func (g *testGenerator) inferZeroParams(action metamodel.Action) string {
+	params := collectArcParams(g.schema, action.ID)
+
+	var parts []string
+	for _, name := range sortedParams(params) {
+		switch params[name] {
+		case "address":
+			parts = append(parts, "address(0)")
+		case "uint256":
+			parts = append(parts, "0")
+		case "bool":
+			parts = append(parts, "false")
+		default:
+			parts = append(parts, "0")
+		}
+	}
+
+	return strings.Join(parts, ", ")
+}
+
+func (g *testGenerator) hasAction(id string) bool {
+	for _, a := range g.schema.Actions {
+		if a.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// collectArcParams gathers parameter names and types from arcs.
+func collectArcParams(schema *metamodel.Schema, actionID string) map[string]string {
+	params := make(map[string]string)
+
+	for _, arc := range schema.InputArcs(actionID) {
+		for _, key := range arc.Keys {
+			params[key] = inferParamType(key)
+		}
+		if arc.Value != "" {
+			params[arc.Value] = "uint256"
+		}
+	}
+
+	for _, arc := range schema.OutputArcs(actionID) {
+		for _, key := range arc.Keys {
+			params[key] = inferParamType(key)
+		}
+		if arc.Value != "" {
+			params[arc.Value] = "uint256"
+		}
+	}
+
+	return params
+}
+
+// sortedParams returns param names in a stable order.
+func sortedParams(params map[string]string) []string {
+	order := []string{"caller", "from", "to", "owner", "spender", "operator", "receiver", "beneficiary", "id", "tokenId", "amount", "assets", "shares", "total", "claimAmount"}
+	var result []string
+	seen := make(map[string]bool)
+
+	for _, name := range order {
+		if _, ok := params[name]; ok {
+			result = append(result, name)
+			seen[name] = true
+		}
+	}
+	for name := range params {
+		if !seen[name] {
+			result = append(result, name)
+		}
+	}
+	return result
+}
+

@@ -130,6 +130,100 @@ func (f *ArcnetWitnessFactory) CreateAssignment(circuitName string, witness map[
 		}
 		return assignment, nil
 
+	case "transferFrom":
+		assignment := &TransferFromCircuit{}
+		var err error
+		if assignment.PreStateRoot, err = goprover.ParseWitnessField(witness, "preStateRoot"); err != nil {
+			return nil, err
+		}
+		if assignment.PostStateRoot, err = goprover.ParseWitnessField(witness, "postStateRoot"); err != nil {
+			return nil, err
+		}
+		if assignment.From, err = goprover.ParseWitnessField(witness, "from"); err != nil {
+			return nil, err
+		}
+		if assignment.To, err = goprover.ParseWitnessField(witness, "to"); err != nil {
+			return nil, err
+		}
+		if assignment.Caller, err = goprover.ParseWitnessField(witness, "caller"); err != nil {
+			return nil, err
+		}
+		if assignment.Amount, err = goprover.ParseWitnessField(witness, "amount"); err != nil {
+			return nil, err
+		}
+		if assignment.BalanceFrom, err = goprover.ParseWitnessField(witness, "balanceFrom"); err != nil {
+			return nil, err
+		}
+		if assignment.AllowanceFrom, err = goprover.ParseWitnessField(witness, "allowanceFrom"); err != nil {
+			return nil, err
+		}
+		for i := 0; i < 10; i++ {
+			key := fmt.Sprintf("balancePath%d", i)
+			if assignment.BalancePath[i], err = goprover.ParseWitnessField(witness, key); err != nil {
+				return nil, err
+			}
+			key = fmt.Sprintf("balanceIndex%d", i)
+			if assignment.BalanceIndices[i], err = goprover.ParseWitnessField(witness, key); err != nil {
+				return nil, err
+			}
+			key = fmt.Sprintf("allowancePath%d", i)
+			if assignment.AllowancePath[i], err = goprover.ParseWitnessField(witness, key); err != nil {
+				return nil, err
+			}
+			key = fmt.Sprintf("allowanceIndex%d", i)
+			if assignment.AllowanceIdx[i], err = goprover.ParseWitnessField(witness, key); err != nil {
+				return nil, err
+			}
+		}
+		return assignment, nil
+
+	case "vestClaim":
+		assignment := &VestingClaimCircuit{}
+		var err error
+		if assignment.PreStateRoot, err = goprover.ParseWitnessField(witness, "preStateRoot"); err != nil {
+			return nil, err
+		}
+		if assignment.PostStateRoot, err = goprover.ParseWitnessField(witness, "postStateRoot"); err != nil {
+			return nil, err
+		}
+		if assignment.TokenID, err = goprover.ParseWitnessField(witness, "tokenID"); err != nil {
+			return nil, err
+		}
+		if assignment.Caller, err = goprover.ParseWitnessField(witness, "caller"); err != nil {
+			return nil, err
+		}
+		if assignment.ClaimAmount, err = goprover.ParseWitnessField(witness, "claimAmount"); err != nil {
+			return nil, err
+		}
+		if assignment.VestedAmount, err = goprover.ParseWitnessField(witness, "vestedAmount"); err != nil {
+			return nil, err
+		}
+		if assignment.Claimed, err = goprover.ParseWitnessField(witness, "claimed"); err != nil {
+			return nil, err
+		}
+		if assignment.Owner, err = goprover.ParseWitnessField(witness, "owner"); err != nil {
+			return nil, err
+		}
+		for i := 0; i < 10; i++ {
+			key := fmt.Sprintf("schedulePath%d", i)
+			if assignment.SchedulePath[i], err = goprover.ParseWitnessField(witness, key); err != nil {
+				return nil, err
+			}
+			key = fmt.Sprintf("scheduleIndex%d", i)
+			if assignment.ScheduleIndices[i], err = goprover.ParseWitnessField(witness, key); err != nil {
+				return nil, err
+			}
+			key = fmt.Sprintf("ownerPath%d", i)
+			if assignment.OwnerPath[i], err = goprover.ParseWitnessField(witness, key); err != nil {
+				return nil, err
+			}
+			key = fmt.Sprintf("ownerIndex%d", i)
+			if assignment.OwnerIndices[i], err = goprover.ParseWitnessField(witness, key); err != nil {
+				return nil, err
+			}
+		}
+		return assignment, nil
+
 	default:
 		return nil, fmt.Errorf("unknown circuit: %s", circuitName)
 	}

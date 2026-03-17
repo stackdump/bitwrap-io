@@ -57,6 +57,102 @@ type genesisGenerator struct {
 
 func (g *genesisGenerator) generate() string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("// Genesis script for %s\n", g.contractName))
+
+	b.WriteString("// SPDX-License-Identifier: MIT\n")
+	b.WriteString("pragma solidity ^0.8.20;\n\n")
+	b.WriteString("import \"forge-std/Script.sol\";\n")
+	b.WriteString(fmt.Sprintf("import \"../src/%s.sol\";\n\n", g.contractName))
+
+	b.WriteString(fmt.Sprintf("/// @title Genesis script for %s\n", g.contractName))
+	b.WriteString("/// @notice Deploys the contract and executes initial state setup\n")
+	b.WriteString(fmt.Sprintf("contract %sGenesis is Script {\n", g.contractName))
+
+	// Address constants
+	b.WriteString("    // ============ Addresses ============\n\n")
+	for name, addr := range g.addresses {
+		b.WriteString(fmt.Sprintf("    address constant %s = %s;\n", strings.ToUpper(name), addr))
+	}
+	b.WriteString("\n")
+
+	// Run function
+	b.WriteString("    function run() external {\n")
+	b.WriteString("        uint256 deployerPrivateKey = vm.envUint(\"PRIVATE_KEY\");\n")
+	b.WriteString("        vm.startBroadcast(deployerPrivateKey);\n\n")
+
+	// Deploy contract
+	b.WriteString(fmt.Sprintf("        %s token = new %s();\n", g.contractName, g.contractName))
+	b.WriteString(fmt.Sprintf("        console.log(\"%s deployed at:\", address(token));\n\n", g.contractName))
+
+	// Execute genesis actions
+	if len(g.config.Actions) > 0 {
+		b.WriteString("        // ============ Genesis Actions ============\n\n")
+		for i, action := range g.config.Actions {
+			b.WriteString(fmt.Sprintf("        // Action %d: %s\n", i+1, action.Action))
+			args := g.formatActionArgs(action)
+			b.WriteString(fmt.Sprintf("        token.%s(%s);\n", action.Action, args))
+		}
+		b.WriteString("\n")
+	}
+
+	// Advance epochs if configured
+	if g.config.TotalEpochs > 0 {
+		b.WriteString(fmt.Sprintf("        // Advance %d epochs\n", g.config.TotalEpochs))
+		b.WriteString(fmt.Sprintf("        for (uint256 i = 0; i < %d; i++) {\n", g.config.TotalEpochs))
+		b.WriteString("            token.advanceEpoch();\n")
+		b.WriteString("        }\n\n")
+	}
+
+	b.WriteString("        vm.stopBroadcast();\n")
+	b.WriteString("    }\n")
+	b.WriteString("}\n")
+
 	return b.String()
+}
+
+func (g *genesisGenerator) formatActionArgs(action GenesisAction) string {
+	var parts []string
+	// Stable ordering: common param names first
+	order := []string{"to", "from", "beneficiary", "amount", "total", "tokenId"}
+
+	seen := make(map[string]bool)
+	for _, name := range order {
+		if val, ok := action.Bindings[name]; ok {
+			parts = append(parts, g.formatValue(name, val))
+			seen[name] = true
+		}
+	}
+	for name, val := range action.Bindings {
+		if !seen[name] {
+			parts = append(parts, g.formatValue(name, val))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+func (g *genesisGenerator) formatValue(name string, val any) string {
+	switch v := val.(type) {
+	case string:
+		// Check if it's an address alias
+		if addr, ok := g.addresses[v]; ok {
+			return addr
+		}
+		// Check if it's already an address literal
+		if strings.HasPrefix(v, "0x") {
+			return v
+		}
+		return v
+	case float64:
+		return fmt.Sprintf("%d", int64(v))
+	case int:
+		return fmt.Sprintf("%d", v)
+	case int64:
+		return fmt.Sprintf("%d", v)
+	case bool:
+		if v {
+			return "true"
+		}
+		return "false"
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }

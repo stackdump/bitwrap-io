@@ -53,14 +53,13 @@ func (c *TransferCircuit) Define(api frontend.API) error {
 	}
 	api.AssertIsEqual(current, c.PreStateRoot)
 
-	// Compute new balances
+	// Verify post-state: new balances must hash to PostStateRoot
 	newBalanceFrom := api.Sub(c.BalanceFrom, c.Amount)
 	newBalanceTo := api.Add(c.BalanceTo, c.Amount)
-
-	// We trust the postStateRoot is computed correctly from new balances
-	// (In a full implementation, we'd also verify the post-state proof)
-	_ = newBalanceFrom
-	_ = newBalanceTo
+	postLeaf := mimcHash(api, c.From, newBalanceFrom)
+	postLeaf2 := mimcHash(api, c.To, newBalanceTo)
+	computedPost := mimcHash(api, postLeaf, postLeaf2)
+	api.AssertIsEqual(computedPost, c.PostStateRoot)
 
 	return nil
 }
@@ -118,9 +117,17 @@ func (c *TransferFromCircuit) Define(api frontend.API) error {
 	}
 	allowanceRoot := current
 
-	// State root is combination of balance and allowance roots
+	// Verify pre-state root
 	computedRoot := mimcHash(api, balanceRoot, allowanceRoot)
 	api.AssertIsEqual(computedRoot, c.PreStateRoot)
+
+	// Verify post-state: new balance and reduced allowance
+	newBalance := api.Sub(c.BalanceFrom, c.Amount)
+	newAllowance := api.Sub(c.AllowanceFrom, c.Amount)
+	postBalanceLeaf := mimcHash(api, c.From, newBalance)
+	postAllowanceLeaf := mimcHash(api, allowanceKey, newAllowance)
+	computedPost := mimcHash(api, postBalanceLeaf, postAllowanceLeaf)
+	api.AssertIsEqual(computedPost, c.PostStateRoot)
 
 	return nil
 }
@@ -143,8 +150,10 @@ func (c *MintCircuit) Define(api frontend.API) error {
 	// Guard: caller == minter
 	api.AssertIsEqual(c.Caller, c.Minter)
 
-	// Compute new balance
-	_ = api.Add(c.BalanceTo, c.Amount)
+	// Verify post-state: new balance must hash to PostStateRoot
+	newBalance := api.Add(c.BalanceTo, c.Amount)
+	postLeaf := mimcHash(api, c.To, newBalance)
+	api.AssertIsEqual(postLeaf, c.PostStateRoot)
 
 	return nil
 }
@@ -170,7 +179,7 @@ func (c *BurnCircuit) Define(api frontend.API) error {
 	diff := api.Sub(c.BalanceFrom, c.Amount)
 	api.ToBinary(diff, 64)
 
-	// Verify Merkle proof
+	// Verify pre-state Merkle proof
 	leaf := mimcHash(api, c.From, c.BalanceFrom)
 	current := leaf
 	for i := 0; i < 20; i++ {
@@ -180,6 +189,11 @@ func (c *BurnCircuit) Define(api frontend.API) error {
 		current = mimcHash(api, left, right)
 	}
 	api.AssertIsEqual(current, c.PreStateRoot)
+
+	// Verify post-state: reduced balance
+	newBalance := api.Sub(c.BalanceFrom, c.Amount)
+	postLeaf := mimcHash(api, c.From, newBalance)
+	api.AssertIsEqual(postLeaf, c.PostStateRoot)
 
 	return nil
 }
@@ -200,6 +214,10 @@ type ApproveCircuit struct {
 func (c *ApproveCircuit) Define(api frontend.API) error {
 	// Guard: owner == caller (only owner can approve)
 	api.AssertIsEqual(c.Owner, c.Caller)
+
+	// Verify post-state: allowance set to amount
+	postLeaf := mimcHash(api, c.Spender, c.Amount)
+	api.AssertIsEqual(postLeaf, c.PostStateRoot)
 
 	return nil
 }
@@ -256,9 +274,14 @@ func (c *VestingClaimCircuit) Define(api frontend.API) error {
 	}
 	ownerRoot := current
 
-	// State root combines both
+	// Verify pre-state root
 	computedRoot := mimcHash(api, scheduleRoot, ownerRoot)
 	api.AssertIsEqual(computedRoot, c.PreStateRoot)
+
+	// Verify post-state: updated claimed amount
+	newClaimed := api.Add(c.Claimed, c.ClaimAmount)
+	postLeaf := mimcHash(api, c.TokenID, newClaimed)
+	api.AssertIsEqual(postLeaf, c.PostStateRoot)
 
 	return nil
 }

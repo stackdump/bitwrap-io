@@ -267,6 +267,7 @@ var templates = []Template{
 	{ID: "erc721", Name: "ERC-721 Non-Fungible Token", Standard: "ERC-721", Description: "Non-fungible token with ownership and transfers"},
 	{ID: "erc1155", Name: "ERC-1155 Multi Token", Standard: "ERC-1155", Description: "Multi-token standard supporting both fungible and non-fungible"},
 	{ID: "erc4626", Name: "ERC-4626 Tokenized Vault", Standard: "ERC-4626", Description: "Tokenized vault with deposit, withdraw, and yield"},
+	{ID: "erc5725", Name: "ERC-5725 Transferable Vesting NFT", Standard: "ERC-5725", Description: "Transferable vesting NFT with create, claim, transfer, revoke, burn"},
 }
 
 // handleTemplates lists available ERC templates.
@@ -314,6 +315,7 @@ func (s *Server) handleSolGen(w http.ResponseWriter, r *http.Request) {
 		"erc721": "BitwrapERC721.sol",
 		"erc1155": "BitwrapERC1155.sol",
 		"erc4626": "BitwrapERC4626.sol",
+		"erc5725": "BitwrapERC5725.sol",
 	}
 
 	resp := solgenResponse{
@@ -369,6 +371,8 @@ func (s *Server) getTemplate(id string) erc.Template {
 		return erc.NewERC01155("ERC1155")
 	case "erc4626":
 		return erc.NewERC04626("ERC4626", "VLT")
+	case "erc5725":
+		return erc.NewERC05725("ERC5725", "VEST", "0x0000000000000000000000000000000000000000")
 	default:
 		return nil
 	}
