@@ -10,9 +10,11 @@ import (
 	"os"
 	"strings"
 
+	"github.com/bitwrap-io/bitwrap/erc"
 	"github.com/bitwrap-io/bitwrap/internal/seal"
 	"github.com/bitwrap-io/bitwrap/internal/store"
 	"github.com/bitwrap-io/bitwrap/internal/svg"
+	"github.com/bitwrap-io/bitwrap/solidity"
 )
 
 // Options configures the server.
@@ -57,6 +59,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleTemplates(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/templates/"):
 		s.handleTemplate(w, r)
+	case r.URL.Path == "/api/solgen" && r.Method == http.MethodPost:
+		s.handleSolGen(w, r)
 
 	// Object routes
 	case strings.HasPrefix(r.URL.Path, "/o/"):
@@ -85,6 +89,9 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	}
 	if path == "/editor" {
 		path = "/editor.html"
+	}
+	if path == "/remix" {
+		path = "/remix-plugin.html"
 	}
 
 	// Serve the file
@@ -244,6 +251,66 @@ var templates = []Template{
 func (s *Server) handleTemplates(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"templates": templates})
+}
+
+// solgenRequest is the request body for /api/solgen.
+type solgenRequest struct {
+	Template string `json:"template"`
+}
+
+// solgenResponse is the response body for /api/solgen.
+type solgenResponse struct {
+	Name     string `json:"name"`
+	Filename string `json:"filename"`
+	Solidity string `json:"solidity"`
+}
+
+// handleSolGen generates Solidity code from an ERC template.
+func (s *Server) handleSolGen(w http.ResponseWriter, r *http.Request) {
+	var req solgenRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	if req.Template == "" {
+		http.Error(w, "template field required", http.StatusBadRequest)
+		return
+	}
+
+	var tmpl erc.Template
+	switch req.Template {
+	case "erc20":
+		tmpl = erc.NewERC020("BitwrapERC20", "BWR", 18)
+	case "erc721":
+		tmpl = erc.NewERC0721("BitwrapERC721", "BNFT")
+	case "erc1155":
+		tmpl = erc.NewERC01155("BitwrapERC1155")
+	case "erc4626":
+		tmpl = erc.NewERC04626("BitwrapERC4626", "BWR")
+	default:
+		http.Error(w, fmt.Sprintf("Unknown template: %s", req.Template), http.StatusBadRequest)
+		return
+	}
+
+	code := solidity.Generate(tmpl.Schema())
+
+	filenames := map[string]string{
+		"erc20":  "BitwrapERC20.sol",
+		"erc721": "BitwrapERC721.sol",
+		"erc1155": "BitwrapERC1155.sol",
+		"erc4626": "BitwrapERC4626.sol",
+	}
+
+	resp := solgenResponse{
+		Name:     tmpl.Metadata().Name,
+		Filename: filenames[req.Template],
+		Solidity: code,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 // handleTemplate returns a specific template as JSON-LD.

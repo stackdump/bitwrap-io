@@ -1,0 +1,73 @@
+schema ERC20 {
+  version "1.0.0"
+  domain "custody"
+  asset "erc20"
+
+  initial_state {
+    ASSETS.AVAILABLE: {
+      "0xAlice": 1000
+      "0xBob": 500
+      "0xCharlie": 250
+    }
+    ASSETS.TOTAL_SUPPLY: 1750
+    INCOMES.MINT: 0
+    EXPENSES.BURN: 0
+  }
+
+  register ASSETS.AVAILABLE map[address]uint256 observable
+  register ASSETS.TOTAL_SUPPLY uint256 observable
+  register INCOMES.MINT uint256 observable
+  register EXPENSES.BURN uint256 observable
+
+  event TransferBalanceChange {
+    from: address indexed
+    to: address indexed
+    amount: uint256
+  }
+
+  event MintBalanceChange {
+    to: address indexed
+    amount: uint256
+  }
+
+  event BurnBalanceChange {
+    from: address indexed
+    amount: uint256
+  }
+
+  fn(transfer) {
+    var from address
+    var to address
+    var amount amount
+
+    require(ASSETS.AVAILABLE[from] >= amount && amount > 0)
+    @event TransferBalanceChange
+
+    ASSETS.AVAILABLE[from] -|amount|> transfer
+    transfer -|amount|> ASSETS.AVAILABLE[to]
+  }
+
+  fn(mint) {
+    var to address
+    var amount amount
+
+    require(amount > 0)
+    @event MintBalanceChange
+
+    mint -|amount|> ASSETS.AVAILABLE[to]
+    mint -|amount|> ASSETS.TOTAL_SUPPLY
+    mint -|amount|> INCOMES.MINT
+  }
+
+  fn(burn) {
+    var from address
+    var amount amount
+
+    require(ASSETS.AVAILABLE[from] >= amount && amount > 0)
+    @event BurnBalanceChange
+
+    ASSETS.AVAILABLE[from] -|amount|> burn
+    ASSETS.TOTAL_SUPPLY -|amount|> burn
+    burn -|amount|> EXPENSES.BURN
+  }
+}

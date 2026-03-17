@@ -1,11 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
+	"github.com/bitwrap-io/bitwrap/dsl"
 	"github.com/bitwrap-io/bitwrap/internal/server"
 	"github.com/bitwrap-io/bitwrap/internal/static"
 	"github.com/bitwrap-io/bitwrap/internal/store"
@@ -16,7 +19,29 @@ func main() {
 	dataDir := flag.String("data", "./data", "Data directory for storage")
 	noProver := flag.Bool("no-prover", false, "Disable ZK prover (faster startup)")
 	solgen := flag.Bool("solgen", false, "Enable Solidity generation endpoints")
+	compile := flag.String("compile", "", "Compile a .btw file and output JSON schema to stdout")
 	flag.Parse()
+
+	if *compile != "" {
+		src, err := os.ReadFile(*compile)
+		if err != nil {
+			log.Fatalf("Failed to read %s: %v", *compile, err)
+		}
+		ast, err := dsl.Parse(string(src))
+		if err != nil {
+			log.Fatalf("Parse error: %v", err)
+		}
+		schema, err := dsl.Build(ast)
+		if err != nil {
+			log.Fatalf("Build error: %v", err)
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(schema); err != nil {
+			log.Fatalf("JSON encode error: %v", err)
+		}
+		return
+	}
 
 	storage := store.NewFSStore(*dataDir)
 
