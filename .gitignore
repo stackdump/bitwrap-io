@@ -1,5 +1,6 @@
 /bitwrap
 data/
 *.exe
+*.wasm
 .DS_Store
 .claude/
