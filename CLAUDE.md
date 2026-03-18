@@ -35,8 +35,7 @@ make test             # Run tests
 - `internal/seal/` — CID computation (JSON-LD canonicalization)
 - `internal/store/` — Filesystem storage
 - `internal/svg/` — SVG generation from Petri net models
-- `internal/static/` — go:embed for public/
-- `public/` → symlink to `internal/static/public/`
+- `public/` — frontend JS/CSS/HTML (go:embed via public/embed.go)
 
 ## API
 

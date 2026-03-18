@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stackdump/bitwrap-io/internal/static"
+	"github.com/stackdump/bitwrap-io/public"
 	"github.com/stackdump/bitwrap-io/internal/store"
 )
 
@@ -15,7 +15,7 @@ func testServer(t *testing.T) *Server {
 	t.Helper()
 	dir := t.TempDir()
 	s := store.NewFSStore(dir)
-	pub, err := static.Public()
+	pub, err := public.FS()
 	if err != nil {
 		t.Fatal(err)
 	}

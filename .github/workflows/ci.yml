@@ -43,7 +43,7 @@ jobs:
       - name: MiMC parity
         run: |
           node --experimental-vm-modules -e "
-          import('./internal/static/public/mimc.js').then(({ mimcHash }) => {
+          import('./public/mimc.js').then(({ mimcHash }) => {
             const tests = [
               [42n, 100n, '13603062797811675188639909697080538913826685491246923374232736861692843824956'],
               [1n, 100n, '2108862887778322224540152968033371138921907848559177206190676617530753041980'],
@@ -70,8 +70,8 @@ jobs:
         run: |
           node --experimental-vm-modules -e "
           Promise.all([
-            import('./internal/static/public/mimc.js'),
-            import('./internal/static/public/merkle.js')
+            import('./public/mimc.js'),
+            import('./public/merkle.js')
           ]).then(([{ mimcHash }, { MerkleTree }]) => {
             let ok = true;
 
@@ -103,7 +103,7 @@ jobs:
 
       - name: JS syntax check
         run: |
-          for f in internal/static/public/mimc.js internal/static/public/merkle.js internal/static/public/witness-builder.js internal/static/public/bitwrap.js; do
+          for f in public/mimc.js public/merkle.js public/witness-builder.js public/bitwrap.js; do
             node --check "$f" || exit 1
           done
           echo "All JS files pass syntax check"

@@ -10,7 +10,7 @@ import (
 
 	"github.com/stackdump/bitwrap-io/dsl"
 	"github.com/stackdump/bitwrap-io/internal/server"
-	"github.com/stackdump/bitwrap-io/internal/static"
+	"github.com/stackdump/bitwrap-io/public"
 	"github.com/stackdump/bitwrap-io/internal/store"
 )
 
@@ -45,7 +45,7 @@ func main() {
 
 	storage := store.NewFSStore(*dataDir)
 
-	publicFS, err := static.Public()
+	publicFS, err := public.FS()
 	if err != nil {
 		log.Fatalf("Failed to get public filesystem: %v", err)
 	}
