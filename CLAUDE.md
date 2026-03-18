@@ -17,6 +17,7 @@ make test             # Run tests
 -data ./data                Data directory for CID storage
 -no-prover                  Disable ZK prover (faster startup)
 -no-solgen                  Disable Solidity generation endpoints
+-key-dir ./keys             Persist circuit keys for fast restarts
 -compile path/to/file.btw   Compile .btw file to JSON schema on stdout
 ```
 
@@ -54,6 +55,8 @@ make test             # Run tests
 - `POST /api/compile` — compile .btw DSL source to schema JSON
 - `GET /api/circuits` — list available ZK circuits
 - `POST /api/prove` — submit witness for ZK proof generation
+- `GET /api/vk/{circuit}` — download verifying key (binary)
+- `GET /api/vk/{circuit}/solidity` — download Solidity verifier contract
 
 ## Dependencies
 

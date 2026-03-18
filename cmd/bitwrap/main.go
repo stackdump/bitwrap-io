@@ -19,6 +19,7 @@ func main() {
 	dataDir := flag.String("data", "./data", "Data directory for storage")
 	noProver := flag.Bool("no-prover", false, "Disable ZK prover (faster startup)")
 	noSolgen := flag.Bool("no-solgen", false, "Disable Solidity generation endpoints")
+	keyDir := flag.String("key-dir", "", "Directory for persistent circuit keys (enables fast restarts)")
 	compile := flag.String("compile", "", "Compile a .btw file and output JSON schema to stdout")
 	flag.Parse()
 
@@ -53,6 +54,7 @@ func main() {
 	srv := server.New(storage, publicFS, server.Options{
 		EnableProver:   !*noProver,
 		EnableSolidity: !*noSolgen,
+		KeyDir:         *keyDir,
 	})
 
 	addr := fmt.Sprintf(":%d", *port)

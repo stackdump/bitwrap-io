@@ -24,6 +24,7 @@ import (
 type Options struct {
 	EnableProver   bool
 	EnableSolidity bool
+	KeyDir         string // directory for persistent circuit keys (empty = no persistence)
 }
 
 // Server is the bitwrap HTTP server.
@@ -32,6 +33,7 @@ type Server struct {
 	publicFS   fs.FS
 	opts       Options
 	proverSvc  *prover.Service
+	keyStore   *prover.KeyStore
 }
 
 // New creates a new server.
@@ -40,11 +42,12 @@ func New(s *store.FSStore, publicFS fs.FS, opts Options) *Server {
 	if opts.EnableProver {
 		log.Printf("Initializing ZK prover (compiling circuits)...")
 		start := time.Now()
-		svc, err := prover.NewArcnetService()
+		svc, ks, err := prover.NewArcnetService(opts.KeyDir)
 		if err != nil {
 			log.Printf("WARNING: ZK prover initialization failed: %v", err)
 		} else {
 			srv.proverSvc = svc
+			srv.keyStore = ks
 			log.Printf("ZK prover ready (%d circuits compiled in %v)", len(svc.Prover().ListCircuits()), time.Since(start))
 		}
 	}
@@ -97,6 +100,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleProve(w, r)
 	case r.URL.Path == "/api/circuits":
 		s.handleCircuits(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/vk/"):
+		s.handleVK(w, r)
 	case r.URL.Path == "/api/compile" && r.Method == http.MethodPost:
 		s.handleCompile(w, r)
 
@@ -596,6 +601,48 @@ func (s *Server) handleCircuits(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"circuits": circuits})
+}
+
+// handleVK serves verifying key data for a circuit.
+// GET /api/vk/{circuit} — raw verifying key bytes
+// GET /api/vk/{circuit}/solidity — Solidity verifier contract
+func (s *Server) handleVK(w http.ResponseWriter, r *http.Request) {
+	if s.keyStore == nil {
+		http.Error(w, "Key store not enabled (start with -key-dir flag)", http.StatusServiceUnavailable)
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/api/vk/")
+	parts := strings.SplitN(path, "/", 2)
+	circuit := parts[0]
+
+	if !s.keyStore.Has(circuit) {
+		http.Error(w, fmt.Sprintf("circuit %q not found", circuit), http.StatusNotFound)
+		return
+	}
+
+	// GET /api/vk/{circuit}/solidity
+	if len(parts) == 2 && parts[1] == "solidity" {
+		sol, err := s.keyStore.ExportSolidityVerifier(circuit)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=Verifier_%s.sol", circuit))
+		w.Write(sol)
+		return
+	}
+
+	// GET /api/vk/{circuit} — raw binary key
+	vkBytes, err := s.keyStore.ExportVerifyingKey(circuit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s.vk", circuit))
+	w.Write(vkBytes)
 }
 
 // handleCompile compiles a .btw DSL source to metamodel schema JSON.

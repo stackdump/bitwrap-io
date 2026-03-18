@@ -230,20 +230,48 @@ func (f *ArcnetWitnessFactory) CreateAssignment(circuitName string, witness map[
 }
 
 // NewArcnetService creates a new prover service with arcnet's circuits and witness factory.
-func NewArcnetService() (*Service, error) {
+// If keyDir is non-empty, keys are persisted to disk for fast restarts.
+func NewArcnetService(keyDir string) (*Service, *KeyStore, error) {
 	p := NewProver()
 
 	log.Info().Msg("Registering standard circuits...")
 	start := time.Now()
 
-	if err := RegisterStandardCircuits(p); err != nil {
-		return nil, fmt.Errorf("failed to register circuits: %w", err)
+	var ks *KeyStore
+	if keyDir != "" {
+		var err error
+		ks, err = NewKeyStore(keyDir)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to create keystore: %w", err)
+		}
+
+		circuits := standardCircuits()
+		if err := RegisterWithKeyStore(p, ks, circuits); err != nil {
+			return nil, nil, fmt.Errorf("failed to register circuits: %w", err)
+		}
+	} else {
+		if err := RegisterStandardCircuits(p); err != nil {
+			return nil, nil, fmt.Errorf("failed to register circuits: %w", err)
+		}
 	}
 
 	log.Info().
 		Dur("elapsed", time.Since(start)).
 		Int("circuits", len(p.ListCircuits())).
+		Bool("cached", ks != nil).
 		Msg("Circuits registered")
 
-	return goprover.NewService(p, &ArcnetWitnessFactory{}), nil
+	return goprover.NewService(p, &ArcnetWitnessFactory{}), ks, nil
+}
+
+// standardCircuits returns the circuit definitions (without compiling them).
+func standardCircuits() map[string]frontend.Circuit {
+	return map[string]frontend.Circuit{
+		"transfer":     &TransferCircuit{},
+		"transferFrom": &TransferFromCircuit{},
+		"mint":         &MintCircuit{},
+		"burn":         &BurnCircuit{},
+		"approve":      &ApproveCircuit{},
+		"vestClaim":    &VestingClaimCircuit{},
+	}
 }
