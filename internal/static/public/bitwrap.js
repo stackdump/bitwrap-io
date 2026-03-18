@@ -1,5 +1,12 @@
 // bitwrap.js — ZK + Solidity UI glue for the editor
 
+import { mimcHash } from './mimc.js';
+import { MerkleTree } from './merkle.js';
+import {
+    buildTransferWitness, buildMintWitness, buildBurnWitness,
+    buildApproveWitness, buildTransferFromWitness, buildVestClaimWitness
+} from './witness-builder.js';
+
 const petriView = document.querySelector('petri-view');
 
 // Save button
@@ -85,7 +92,7 @@ if (btnSolgen) {
     });
 }
 
-// ZK Proof button — shows circuit picker then describes proof requirements
+// ZK Proof button — builds witness client-side, then submits to prover
 const btnProve = document.getElementById('btn-prove');
 if (btnProve) {
     btnProve.addEventListener('click', async () => {
@@ -100,26 +107,150 @@ if (btnProve) {
             const circuits = circData.circuits || [];
 
             const choice = prompt(
-                'Available ZK circuits:\n' +
+                'ZK Proof — select circuit:\n' +
                 circuits.map((c, i) => `${i + 1}. ${c.name} — ${c.description}`).join('\n') +
-                '\n\nEnter number to see details:'
+                '\n\nEnter number:'
             );
             if (!choice) return;
             const idx = parseInt(choice) - 1;
             if (idx < 0 || idx >= circuits.length) return;
 
             const circuit = circuits[idx];
-            alert(
-                `Circuit: ${circuit.name}\n\n` +
-                `${circuit.description}\n\n` +
-                `Public inputs:\n` +
-                circuit.public_inputs.map(p => `  - ${p}`).join('\n') +
-                `\n\nUse POST /api/prove with circuit="${circuit.name}" and witness values.`
-            );
+
+            // Collect witness parameters based on circuit type
+            const witnessResult = collectWitness(circuit.name);
+            if (!witnessResult) return;
+
+            btnProve.textContent = 'Proving...';
+
+            const resp = await fetch('/api/prove', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    circuit: witnessResult.circuit,
+                    witness: witnessResult.witness
+                })
+            });
+
+            if (!resp.ok) {
+                const text = await resp.text();
+                alert('Proof failed: ' + text);
+                btnProve.textContent = 'ZK Proof';
+                return;
+            }
+
+            const data = await resp.json();
+            btnProve.textContent = 'Proved!';
+            setTimeout(() => { btnProve.textContent = 'ZK Proof'; }, 3000);
+
+            // Show proof result
+            const proofJson = JSON.stringify(data, null, 2);
+            downloadFile(`proof-${circuit.name}.json`, proofJson);
         } catch (err) {
-            alert('Failed: ' + err.message);
+            alert('Proof failed: ' + err.message);
+            btnProve.textContent = 'ZK Proof';
         }
     });
+}
+
+// Collect witness inputs for a circuit via prompts
+function collectWitness(circuitName) {
+    switch (circuitName) {
+    case 'transfer': {
+        const input = prompt(
+            'Transfer witness (comma-separated):\n' +
+            'from, to, amount, balanceFrom, balanceTo\n\n' +
+            'Example: 1, 2, 50, 1000, 500'
+        );
+        if (!input) return null;
+        const [from, to, amount, balanceFrom, balanceTo] = input.split(',').map(s => BigInt(s.trim()));
+
+        // Build Merkle tree with sender leaf
+        const leaf0 = mimcHash(from, balanceFrom);
+        const leaf1 = mimcHash(to, balanceTo);
+        const tree = MerkleTree.fromLeaves([leaf0, leaf1], 20);
+
+        return buildTransferWitness({ tree, fromIdx: 0, from, to, amount, balanceFrom, balanceTo });
+    }
+    case 'mint': {
+        const input = prompt(
+            'Mint witness (comma-separated):\n' +
+            'minter, to, amount, balanceTo\n\n' +
+            'Example: 1, 2, 100, 0'
+        );
+        if (!input) return null;
+        const [minter, to, amount, balanceTo] = input.split(',').map(s => BigInt(s.trim()));
+        return buildMintWitness({ caller: minter, minter, to, amount, balanceTo });
+    }
+    case 'burn': {
+        const input = prompt(
+            'Burn witness (comma-separated):\n' +
+            'from, amount, balanceFrom\n\n' +
+            'Example: 1, 50, 1000'
+        );
+        if (!input) return null;
+        const [from, amount, balanceFrom] = input.split(',').map(s => BigInt(s.trim()));
+
+        const leaf0 = mimcHash(from, balanceFrom);
+        const tree = MerkleTree.fromLeaves([leaf0], 20);
+
+        return buildBurnWitness({ tree, fromIdx: 0, from, amount, balanceFrom });
+    }
+    case 'approve': {
+        const input = prompt(
+            'Approve witness (comma-separated):\n' +
+            'owner, spender, amount\n\n' +
+            'Example: 1, 2, 500'
+        );
+        if (!input) return null;
+        const [owner, spender, amount] = input.split(',').map(s => BigInt(s.trim()));
+        return buildApproveWitness({ caller: owner, owner, spender, amount });
+    }
+    case 'transferFrom': {
+        const input = prompt(
+            'TransferFrom witness (comma-separated):\n' +
+            'from, to, caller, amount, balanceFrom, allowanceFrom\n\n' +
+            'Example: 1, 3, 2, 50, 1000, 500'
+        );
+        if (!input) return null;
+        const [from, to, caller, amount, balanceFrom, allowanceFrom] = input.split(',').map(s => BigInt(s.trim()));
+
+        const balanceLeaf = mimcHash(from, balanceFrom);
+        const balanceTree = MerkleTree.fromLeaves([balanceLeaf], 10);
+
+        const allowanceKey = mimcHash(from, caller);
+        const allowanceLeaf = mimcHash(allowanceKey, allowanceFrom);
+        const allowanceTree = MerkleTree.fromLeaves([allowanceLeaf], 10);
+
+        return buildTransferFromWitness({
+            balanceTree, allowanceTree, from, to, caller, amount,
+            balanceFrom, allowanceFrom, balanceFromIdx: 0, allowanceFromIdx: 0
+        });
+    }
+    case 'vestClaim': {
+        const input = prompt(
+            'VestClaim witness (comma-separated):\n' +
+            'tokenID, owner, claimAmount, vestedAmount, claimed\n\n' +
+            'Example: 1, 42, 25, 100, 50'
+        );
+        if (!input) return null;
+        const [tokenID, owner, claimAmount, vestedAmount, claimed] = input.split(',').map(s => BigInt(s.trim()));
+
+        const scheduleLeaf = mimcHash(tokenID, vestedAmount);
+        const scheduleTree = MerkleTree.fromLeaves([scheduleLeaf], 10);
+
+        const ownerLeaf = mimcHash(tokenID, owner);
+        const ownerTree = MerkleTree.fromLeaves([ownerLeaf], 10);
+
+        return buildVestClaimWitness({
+            scheduleTree, ownerTree, tokenID, caller: owner, claimAmount,
+            vestedAmount, claimed, owner, scheduleIdx: 0, ownerIdx: 0
+        });
+    }
+    default:
+        alert(`No witness builder for circuit: ${circuitName}`);
+        return null;
+    }
 }
 
 // Templates button — loads real Petri net model into editor

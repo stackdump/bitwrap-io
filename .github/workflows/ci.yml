@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Build
+        run: make build
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Go tests
+        run: make test
+
+  js-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: MiMC parity
+        run: |
+          node --experimental-vm-modules -e "
+          import('./internal/static/public/mimc.js').then(({ mimcHash }) => {
+            const tests = [
+              [42n, 100n, '13603062797811675188639909697080538913826685491246923374232736861692843824956'],
+              [1n, 100n, '2108862887778322224540152968033371138921907848559177206190676617530753041980'],
+              [2n, 200n, '12104544101572163940166299184207267496585694752863501697795764603195813619670'],
+              [3n, 300n, '14050062093042685743601673262179176428971353750296441969316735981035391690629'],
+            ];
+            let ok = true;
+            for (const [a, b, expected] of tests) {
+              const got = mimcHash(a, b).toString();
+              if (got !== expected) { console.error('FAIL: mimcHash(' + a + ',' + b + ')'); ok = false; }
+            }
+            const leaf1 = mimcHash(1n, 100n);
+            const leaf2 = mimcHash(2n, 200n);
+            const internal = mimcHash(leaf1, leaf2);
+            if (internal.toString() !== '10001607114380327872427237512814332051665707940309726398903659001061123407361') {
+              console.error('FAIL: hash-of-hashes'); ok = false;
+            }
+            if (!ok) process.exit(1);
+            console.log('MiMC parity: all tests passed');
+          });
+          "
+
+      - name: Merkle parity
+        run: |
+          node --experimental-vm-modules -e "
+          Promise.all([
+            import('./internal/static/public/mimc.js'),
+            import('./internal/static/public/merkle.js')
+          ]).then(([{ mimcHash }, { MerkleTree }]) => {
+            let ok = true;
+
+            const tree2 = MerkleTree.fromEntries([[1n,100n],[2n,200n],[3n,300n]], 2);
+            if (tree2.root.toString() !== '12130528498295607510169328491562967273325478064319458189868958806658912023584') {
+              console.error('FAIL: depth-2 root'); ok = false;
+            }
+
+            const leaf0 = mimcHash(1n, 100n);
+            const proof0 = tree2.getProof(0);
+            if (!MerkleTree.verifyProof(leaf0, tree2.root, proof0.pathElements, proof0.pathIndices)) {
+              console.error('FAIL: depth-2 proof'); ok = false;
+            }
+
+            const tree20 = MerkleTree.fromEntries([[1n,100n],[2n,200n]], 20);
+            if (tree20.root.toString() !== '13775778477642284888777307564811980032757405543704598195813203538944140930097') {
+              console.error('FAIL: depth-20 root'); ok = false;
+            }
+
+            const proof20 = tree20.getProof(0);
+            if (!MerkleTree.verifyProof(mimcHash(1n,100n), tree20.root, proof20.pathElements, proof20.pathIndices)) {
+              console.error('FAIL: depth-20 proof'); ok = false;
+            }
+
+            if (!ok) process.exit(1);
+            console.log('Merkle parity: all tests passed');
+          });
+          "
+
+      - name: JS syntax check
+        run: |
+          for f in internal/static/public/mimc.js internal/static/public/merkle.js internal/static/public/witness-builder.js internal/static/public/bitwrap.js; do
+            node --check "$f" || exit 1
+          done
+          echo "All JS files pass syntax check"
