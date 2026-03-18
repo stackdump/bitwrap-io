@@ -131,6 +131,13 @@ const TEMPLATES = [
         description: 'Tokenized vault with deposit, withdraw, redeem, and yield harvesting.',
         filename: 'BitwrapERC4626.sol',
     },
+    {
+        id: 'erc5725',
+        standard: 'ERC-5725',
+        name: 'Transferable Vesting NFT',
+        description: 'Transferable vesting NFT with create, claim, transfer, revoke, and burn.',
+        filename: 'BitwrapERC5725.sol',
+    },
 ];
 
 // ============ Plugin State ============
@@ -140,6 +147,7 @@ let isInRemix = false;
 let selectedTemplate = null;
 let generatedCode = null;
 let generatedFilename = null;
+let generatedVerifier = null;
 
 // ============ API ============
 
@@ -161,6 +169,21 @@ async function generateSolidity(templateId) {
     }
 
     return resp.json();
+}
+
+async function fetchVerifier(circuit = 'transfer') {
+    const resp = await fetch(`${getApiBase()}/api/vk/${circuit}/solidity`);
+    if (!resp.ok) return null; // Verifier not available (no key-dir)
+    return resp.text();
+}
+
+async function fetchBundle(templateId) {
+    const resp = await fetch(`${getApiBase()}/api/bundle/${templateId}`);
+    if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(`Bundle generation failed: ${text}`);
+    }
+    return resp.blob();
 }
 
 // ============ UI Logic ============
@@ -229,6 +252,9 @@ async function handleGenerate() {
 
     try {
         const result = await generateSolidity(selectedTemplate);
+        // Also fetch verifier if available
+        const verifierCode = await fetchVerifier();
+        generatedVerifier = verifierCode;
         generatedCode = result.solidity;
         generatedFilename = result.filename || TEMPLATES.find(t => t.id === selectedTemplate).filename;
 
@@ -253,7 +279,10 @@ async function handleDeployToRemix() {
     try {
         const path = `contracts/${generatedFilename}`;
         await remixClient.writeFile(path, generatedCode);
-        await remixClient.toast(`Wrote ${path} to workspace`);
+        if (generatedVerifier) {
+            await remixClient.writeFile('contracts/Verifier.sol', generatedVerifier);
+        }
+        await remixClient.toast(`Wrote ${path}${generatedVerifier ? ' + Verifier.sol' : ''} to workspace`);
         deployBtn.textContent = 'Written!';
         setTimeout(() => {
             deployBtn.textContent = 'Deploy to Remix';
@@ -278,6 +307,30 @@ function handleDownload() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+}
+
+async function handleDownloadBundle() {
+    if (!selectedTemplate) return;
+    const btn = document.getElementById('bundle-btn');
+    btn.disabled = true;
+    btn.textContent = 'Building...';
+    try {
+        const blob = await fetchBundle(selectedTemplate);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `bitwrap-${selectedTemplate}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        btn.textContent = 'Downloaded!';
+        setTimeout(() => { btn.textContent = 'Foundry Bundle'; btn.disabled = false; }, 2000);
+    } catch (err) {
+        alert(`Bundle failed: ${err.message}`);
+        btn.textContent = 'Foundry Bundle';
+        btn.disabled = false;
+    }
 }
 
 function handleCopy() {
