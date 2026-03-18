@@ -109,9 +109,9 @@ Client-side modules are available via jsDelivr:
 
 ```html
 <script type="module">
-import { mimcHash } from 'https://cdn.jsdelivr.net/gh/stackdump/bitwrap-io@latest/internal/static/public/mimc.js';
-import { MerkleTree } from 'https://cdn.jsdelivr.net/gh/stackdump/bitwrap-io@latest/internal/static/public/merkle.js';
-import { buildTransferWitness } from 'https://cdn.jsdelivr.net/gh/stackdump/bitwrap-io@latest/internal/static/public/witness-builder.js';
+import { mimcHash } from 'https://cdn.jsdelivr.net/gh/stackdump/bitwrap-io@latest/lib/mimc.js';
+import { MerkleTree } from 'https://cdn.jsdelivr.net/gh/stackdump/bitwrap-io@latest/lib/merkle.js';
+import { buildTransferWitness } from 'https://cdn.jsdelivr.net/gh/stackdump/bitwrap-io@latest/lib/witness-builder.js';
 </script>
 ```
 
