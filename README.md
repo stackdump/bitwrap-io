@@ -1,5 +1,7 @@
 # bitwrap
 
+[![jsDelivr](https://data.jsdelivr.com/v1/package/gh/stackdump/bitwrap-io/badge)](https://www.jsdelivr.com/package/gh/stackdump/bitwrap-io)
+
 **Petri nets as ZK containers.**
 
 bitwrap is a tool for modeling state machines as Petri nets and compiling them into ZK proofs and Solidity smart contracts. One model produces the editor view, the circuit constraints, and the contract code.
@@ -100,6 +102,25 @@ POST /api/compile         Compile .btw DSL source to schema JSON
 GET  /api/circuits        List available ZK circuits
 POST /api/prove           Submit witness for ZK proof generation
 ```
+
+## CDN
+
+Client-side modules are available via jsDelivr:
+
+```html
+<script type="module">
+import { mimcHash } from 'https://cdn.jsdelivr.net/gh/stackdump/bitwrap-io@main/internal/static/public/mimc.js';
+import { MerkleTree } from 'https://cdn.jsdelivr.net/gh/stackdump/bitwrap-io@main/internal/static/public/merkle.js';
+import { buildTransferWitness } from 'https://cdn.jsdelivr.net/gh/stackdump/bitwrap-io@main/internal/static/public/witness-builder.js';
+</script>
+```
+
+| Module | Description |
+|--------|-------------|
+| `mimc.js` | MiMC-BN254 hash (pure BigInt, zero deps) |
+| `merkle.js` | Fixed-depth binary Merkle tree |
+| `witness-builder.js` | Witness builders for all 6 ZK circuits |
+| `petri-view.js` | `<petri-view>` web component for Petri net editing |
 
 ## Architecture
 
