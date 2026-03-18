@@ -103,7 +103,7 @@ jobs:
 
       - name: JS syntax check
         run: |
-          for f in public/mimc.js public/merkle.js public/witness-builder.js public/bitwrap.js; do
+          for f in public/mimc.js public/merkle.js public/witness-builder.js public/safemath.js public/model.js public/state.js public/bridge.js public/bitwrap.js; do
             node --check "$f" || exit 1
           done
           echo "All JS files pass syntax check"
