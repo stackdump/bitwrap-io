@@ -31,7 +31,7 @@ make test             # Run tests
 - `internal/petri/` — Petri net model types + execution engine
 - `internal/metamodel/` — Schema types (states, actions, arcs, events, constraints)
 - `internal/metamodel/guard/` — Guard expression parser + evaluator
-- `internal/arc/` — Arc-level execution (Merkle state, firing)
+- `arc/` — Arc-level execution (MiMC Merkle state trees, firing, safe math)
 - `internal/seal/` — CID computation (JSON-LD canonicalization)
 - `internal/store/` — Filesystem storage
 - `internal/svg/` — SVG generation from Petri net models

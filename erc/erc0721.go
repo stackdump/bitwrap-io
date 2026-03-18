@@ -1,7 +1,7 @@
 package erc
 
 import (
-	"github.com/stackdump/bitwrap-io/internal/arc"
+	"github.com/stackdump/bitwrap-io/arc"
 	"github.com/stackdump/bitwrap-io/internal/metamodel"
 )
 
