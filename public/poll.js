@@ -6,6 +6,7 @@ import { buildVoteCastWitness } from './witness-builder.js';
 
 // Current poll context
 window.currentPollId = null;
+let currentPollData = null; // cached poll data from loadPoll
 let selectedChoice = null;
 
 // ============ Navigation ============
@@ -174,6 +175,7 @@ async function loadPoll(pollId) {
         if (!resp.ok) throw new Error('Poll not found');
         const data = await resp.json();
         const poll = data.poll;
+        currentPollData = poll;
 
         document.getElementById('vote-title').textContent = poll.title;
         document.getElementById('vote-desc').textContent = poll.description || '';
@@ -273,8 +275,9 @@ window.castVote = async function() {
         const leaf = mimcHash(voterSecret, voterWeight);
         const tree = MerkleTree.fromLeaves([leaf], 20);
 
+        const maxChoices = BigInt(currentPollData ? currentPollData.choices.length : 256);
         const witnessResult = buildVoteCastWitness({
-            tree, voterIdx: 0, pollId, voterSecret, voteChoice, voterWeight
+            tree, voterIdx: 0, pollId, voterSecret, voteChoice, voterWeight, maxChoices
         });
 
         btn.innerHTML = '<span class="spinner"></span>Generating proof...';
@@ -317,6 +320,7 @@ window.castVote = async function() {
                     witnessResult.witness.voterRegistryRoot,
                     witnessResult.witness.nullifier,
                     witnessResult.witness.voteCommitment,
+                    witnessResult.witness.maxChoices,
                 ],
             })
         });

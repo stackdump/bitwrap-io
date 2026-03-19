@@ -287,19 +287,19 @@ func (c *VestingClaimCircuit) Define(api frontend.API) error {
 }
 
 // VoteCastCircuit proves: "I am an eligible voter and my vote is valid" without revealing identity or choice.
-// Public inputs: pollId, voterRegistryRoot, nullifier, voteCommitment
+// Public inputs: pollId, voterRegistryRoot, nullifier, voteCommitment, maxChoices
 // Private inputs: voterSecret, voteChoice, voterWeight, pathElements[20], pathIndices[20]
 //
 // The voteCommitment = mimcHash(voterSecret, voteChoice) binds the choice to the voter's secret.
 // Since voterSecret is private and unknown to observers, the commitment cannot be brute-forced
-// even though voteChoice is only 8 bits. Tallying requires the voter to reveal their choice
-// after the poll closes.
+// even though voteChoice is only 8 bits.
 type VoteCastCircuit struct {
 	// Public inputs
 	PollID             frontend.Variable `gnark:",public"`
 	VoterRegistryRoot  frontend.Variable `gnark:",public"`
 	Nullifier          frontend.Variable `gnark:",public"`
 	VoteCommitment     frontend.Variable `gnark:",public"`
+	MaxChoices         frontend.Variable `gnark:",public"`
 
 	// Private inputs
 	VoterSecret  frontend.Variable
@@ -329,8 +329,11 @@ func (c *VoteCastCircuit) Define(api frontend.API) error {
 	expectedNullifier := mimcHash(api, c.VoterSecret, c.PollID)
 	api.AssertIsEqual(c.Nullifier, expectedNullifier)
 
-	// 4. Vote range: proves choice fits in 8 bits (up to 256 options)
+	// 4. Vote range: choice fits in 8 bits AND choice < maxChoices
 	api.ToBinary(c.VoteChoice, 8)
+	diff := api.Sub(c.MaxChoices, c.VoteChoice)   // maxChoices - choice
+	diffMinusOne := api.Sub(diff, 1)               // must be >= 0 (i.e., choice <= maxChoices-1)
+	api.ToBinary(diffMinusOne, 8)                   // proves non-negative
 
 	// 5. Vote commitment: binds choice to voter secret (blinded — can't brute-force)
 	expectedCommitment := mimcHash(api, c.VoterSecret, c.VoteChoice)

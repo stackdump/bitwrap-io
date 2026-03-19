@@ -34,7 +34,7 @@ func (g *generator) generate() string {
 		b.WriteString("        uint256[2] calldata _pA,\n")
 		b.WriteString("        uint256[2][2] calldata _pB,\n")
 		b.WriteString("        uint256[2] calldata _pC,\n")
-		b.WriteString("        uint256[4] calldata _pubSignals\n")
+		b.WriteString("        uint256[5] calldata _pubSignals\n")
 		b.WriteString("    ) external view returns (bool);\n")
 		b.WriteString("}\n\n")
 	}
@@ -135,9 +135,10 @@ func (g *generator) generateConstructor() string {
 	b.WriteString("    // ============ Constructor ============\n\n")
 
 	if g.isVoteSchema() {
-		b.WriteString("    constructor(uint256 _voterRegistryRoot, address _verifier) {\n")
+		b.WriteString("    constructor(uint256 _voterRegistryRoot, uint256 _maxChoices, address _verifier) {\n")
 		b.WriteString("        contractOwner = msg.sender;\n")
 		b.WriteString("        voterRegistryRoot = _voterRegistryRoot;\n")
+		b.WriteString("        maxChoices = _maxChoices;\n")
 		b.WriteString("        verifier = IVerifier(_verifier);\n")
 		b.WriteString("        emit OwnershipTransferred(address(0), msg.sender);\n")
 		b.WriteString("    }\n\n")
@@ -177,12 +178,13 @@ func (g *generator) generateVoteCastFunction() string {
 	b.WriteString("        require(pollConfig == 1, \"poll not active\");\n")
 	b.WriteString("        require(!nullifiers[_nullifier], \"already voted\");\n")
 	b.WriteString("\n")
-	b.WriteString("        // Verify ZK proof: public inputs are [pollId, voterRegistryRoot, nullifier, voteCommitment]\n")
-	b.WriteString("        uint256[4] memory pubSignals;\n")
+	b.WriteString("        // Verify ZK proof: public inputs are [pollId, voterRegistryRoot, nullifier, voteCommitment, maxChoices]\n")
+	b.WriteString("        uint256[5] memory pubSignals;\n")
 	b.WriteString("        pubSignals[0] = _pollId;\n")
 	b.WriteString("        pubSignals[1] = voterRegistryRoot;\n")
 	b.WriteString("        pubSignals[2] = _nullifier;\n")
 	b.WriteString("        pubSignals[3] = _voteCommitment;\n")
+	b.WriteString("        pubSignals[4] = maxChoices;\n")
 	b.WriteString("        require(\n")
 	b.WriteString("            verifier.verifyProof(_pA, _pB, _pC, pubSignals),\n")
 	b.WriteString("            \"invalid ZK proof\"\n")
@@ -284,6 +286,7 @@ func (g *generator) generateStateVariables() string {
 	if g.isVoteSchema() {
 		b.WriteString("\n    // ZK Voter Registry and Verifier\n")
 		b.WriteString("    uint256 public voterRegistryRoot;\n")
+		b.WriteString("    uint256 public maxChoices;\n")
 		b.WriteString("    IVerifier public verifier;\n")
 		b.WriteString("    mapping(uint256 => uint256) public voteCommitments; // nullifier => blinded vote commitment\n")
 	}
@@ -337,6 +340,12 @@ func (g *generator) generateEvents() string {
 	b.WriteString("    // ============ Events ============\n\n")
 
 	for _, action := range g.schema.Actions {
+		// Vote-specific: castVote event matches the hand-written function emit
+		if g.isVoteSchema() && action.ID == "castVote" {
+			b.WriteString("    event CastVote(uint256 epoch, uint256 seq, uint256 indexed nullifier, uint256 voteCommitment);\n")
+			continue
+		}
+
 		params := g.inferEventParams(action)
 		// Add epoch and seq to all events for debugging
 		if params != "" {

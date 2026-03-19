@@ -192,11 +192,12 @@ export function buildTransferFromWitness({
 // voterSecret: voter's secret derived from wallet signature (BigInt)
 // voteChoice: the choice index (BigInt, 0-255)
 // voterWeight: voter's weight in the registry (BigInt)
-export function buildVoteCastWitness({ tree, voterIdx, pollId, voterSecret, voteChoice, voterWeight }) {
+export function buildVoteCastWitness({ tree, voterIdx, pollId, voterSecret, voteChoice, voterWeight, maxChoices }) {
   pollId = BigInt(pollId);
   voterSecret = BigInt(voterSecret);
   voteChoice = BigInt(voteChoice);
   voterWeight = BigInt(voterWeight);
+  maxChoices = BigInt(maxChoices || 256);
 
   // Voter registry root from Merkle tree
   const voterRegistryRoot = tree.root;
@@ -215,6 +216,7 @@ export function buildVoteCastWitness({ tree, voterIdx, pollId, voterSecret, vote
       voterRegistryRoot: fieldStr(voterRegistryRoot),
       nullifier: fieldStr(nullifier),
       voteCommitment: fieldStr(voteCommitment),
+      maxChoices: fieldStr(maxChoices),
       voterSecret: fieldStr(voterSecret),
       voteChoice: fieldStr(voteChoice),
       voterWeight: fieldStr(voterWeight),

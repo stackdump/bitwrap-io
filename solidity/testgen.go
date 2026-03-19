@@ -38,7 +38,7 @@ func (g *testGenerator) generate() string {
 		b.WriteString("\n    function setUp() public {\n")
 		b.WriteString("        // Deploy a mock verifier that always returns true\n")
 		b.WriteString("        address mockVerifier = address(new MockVerifier());\n")
-		b.WriteString(fmt.Sprintf("        token = new %s(0, mockVerifier);\n", contractName))
+		b.WriteString(fmt.Sprintf("        token = new %s(0, 10, mockVerifier);\n", contractName))
 		b.WriteString("    }\n\n")
 	} else {
 		b.WriteString("    function setUp() public {\n")
@@ -63,7 +63,7 @@ func (g *testGenerator) generate() string {
 		b.WriteString("        uint256[2] calldata,\n")
 		b.WriteString("        uint256[2][2] calldata,\n")
 		b.WriteString("        uint256[2] calldata,\n")
-		b.WriteString("        uint256[4] calldata\n")
+		b.WriteString("        uint256[5] calldata\n")
 		b.WriteString("    ) external pure returns (bool) {\n")
 		b.WriteString("        return true;\n")
 		b.WriteString("    }\n")
@@ -232,7 +232,7 @@ func (g *testGenerator) generateInvariantTests(contractName string) string {
 
 	b.WriteString("    function setUp() public {\n")
 	if strings.HasPrefix(g.schema.Version, "Vote:") {
-		b.WriteString(fmt.Sprintf("        token = new %s(0, address(new MockVerifier()));\n", contractName))
+		b.WriteString(fmt.Sprintf("        token = new %s(0, 10, address(new MockVerifier()));\n", contractName))
 	} else {
 		b.WriteString(fmt.Sprintf("        token = new %s();\n", contractName))
 	}

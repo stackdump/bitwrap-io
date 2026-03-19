@@ -84,8 +84,8 @@ func VerifyVoteCastWitness(p *Prover, witnessData map[string]string) error {
 // ValidateVoteCastPublicInputs checks that a voteCast proof's public inputs
 // match the expected poll parameters.
 func ValidateVoteCastPublicInputs(publicInputs []string, expectedPollID, expectedRegistryRoot string) error {
-	if len(publicInputs) < 4 {
-		return fmt.Errorf("voteCast requires 4 public inputs (pollId, registryRoot, nullifier, voteCommitment), got %d", len(publicInputs))
+	if len(publicInputs) < 5 {
+		return fmt.Errorf("voteCast requires 5 public inputs (pollId, registryRoot, nullifier, voteCommitment, maxChoices), got %d", len(publicInputs))
 	}
 
 	// Public inputs order matches circuit definition: PollID, VoterRegistryRoot, Nullifier, VoteCommitment
@@ -109,14 +109,15 @@ func buildPublicWitness(circuitName string, publicInputs []string) (witness.Witn
 	// Create a circuit assignment with only the public fields set
 	switch circuitName {
 	case "voteCast":
-		if len(publicInputs) < 4 {
-			return nil, fmt.Errorf("voteCast requires 4 public inputs, got %d", len(publicInputs))
+		if len(publicInputs) < 5 {
+			return nil, fmt.Errorf("voteCast requires 5 public inputs, got %d", len(publicInputs))
 		}
 		assignment := &VoteCastCircuit{
 			PollID:            parseBigIntOrZero(publicInputs[0]),
 			VoterRegistryRoot: parseBigIntOrZero(publicInputs[1]),
 			Nullifier:         parseBigIntOrZero(publicInputs[2]),
 			VoteCommitment:    parseBigIntOrZero(publicInputs[3]),
+			MaxChoices:        parseBigIntOrZero(publicInputs[4]),
 		}
 		w, err := frontend.NewWitness(assignment, ecc.BN254.ScalarField(), frontend.PublicOnly())
 		if err != nil {

@@ -239,6 +239,9 @@ func (f *ArcnetWitnessFactory) CreateAssignment(circuitName string, witness map[
 		if assignment.VoteCommitment, err = goprover.ParseWitnessField(witness, "voteCommitment"); err != nil {
 			return nil, err
 		}
+		if assignment.MaxChoices, err = goprover.ParseWitnessField(witness, "maxChoices"); err != nil {
+			return nil, err
+		}
 		if assignment.VoterSecret, err = goprover.ParseWitnessField(witness, "voterSecret"); err != nil {
 			return nil, err
 		}

@@ -261,7 +261,7 @@ function collectWitness(circuitName) {
         const leaf = mimcHash(voterSecret, voterWeight);
         const tree = MerkleTree.fromLeaves([leaf], 20);
 
-        return buildVoteCastWitness({ tree, voterIdx: 0, pollId, voterSecret, voteChoice, voterWeight });
+        return buildVoteCastWitness({ tree, voterIdx: 0, pollId, voterSecret, voteChoice, voterWeight, maxChoices: 256n });
     }
     default:
         alert(`No witness builder for circuit: ${circuitName}`);
