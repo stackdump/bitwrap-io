@@ -29,10 +29,18 @@ type createPollRequest struct {
 
 // castVoteRequest is the request body for POST /api/polls/{id}/vote.
 type castVoteRequest struct {
-	Nullifier string            `json:"nullifier"`
-	Proof     string            `json:"proof"`
-	Witness   map[string]string `json:"witness,omitempty"`   // full witness for server-side verification
-	PublicInputs []string       `json:"publicInputs,omitempty"` // proof public inputs for validation
+	Nullifier      string            `json:"nullifier"`
+	VoteCommitment string            `json:"voteCommitment"`             // mimcHash(voterSecret, voteChoice) — blinded
+	Proof          string            `json:"proof"`
+	Witness        map[string]string `json:"witness,omitempty"`          // full witness for server-side verification
+	PublicInputs   []string          `json:"publicInputs,omitempty"`     // proof public inputs for validation
+}
+
+// revealVoteRequest is the request body for POST /api/polls/{id}/reveal.
+type revealVoteRequest struct {
+	Nullifier   string `json:"nullifier"`
+	VoteChoice  int    `json:"voteChoice"`
+	VoterSecret string `json:"voterSecret"` // needed to verify: mimcHash(secret, choice) == commitment
 }
 
 // handleCreatePoll creates a new ZK poll.
@@ -229,6 +237,10 @@ func (s *Server) handleCastVote(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "nullifier required", http.StatusBadRequest)
 		return
 	}
+	if req.VoteCommitment == "" {
+		http.Error(w, "voteCommitment required (blinded vote hash)", http.StatusBadRequest)
+		return
+	}
 	if req.Proof == "" && len(req.Witness) == 0 {
 		http.Error(w, "proof or witness required", http.StatusBadRequest)
 		return
@@ -279,9 +291,10 @@ func (s *Server) handleCastVote(w http.ResponseWriter, r *http.Request) {
 	}
 
 	vote := &store.VoteRecord{
-		Nullifier: req.Nullifier,
-		Proof:     req.Proof,
-		Timestamp: time.Now().UTC(),
+		Nullifier:      req.Nullifier,
+		VoteCommitment: req.VoteCommitment,
+		Proof:          req.Proof,
+		Timestamp:      time.Now().UTC(),
 	}
 
 	if err := s.store.SaveVote(pollID, vote); err != nil {
@@ -298,7 +311,88 @@ func (s *Server) handleCastVote(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
 }
 
+// handleRevealVote allows a voter to reveal their choice after the poll closes.
+// Verifies mimcHash(voterSecret, voteChoice) == storedCommitment.
+func (s *Server) handleRevealVote(w http.ResponseWriter, r *http.Request) {
+	pollID := extractPollID(r.URL.Path)
+	if pollID == "" {
+		http.Error(w, "Poll ID required", http.StatusBadRequest)
+		return
+	}
+
+	poll, err := s.store.ReadPoll(pollID)
+	if err != nil {
+		http.Error(w, "Poll not found", http.StatusNotFound)
+		return
+	}
+
+	if poll.Status != "closed" {
+		http.Error(w, "Poll must be closed before votes can be revealed", http.StatusBadRequest)
+		return
+	}
+
+	var req revealVoteRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	if req.Nullifier == "" || req.VoterSecret == "" {
+		http.Error(w, "nullifier and voterSecret required", http.StatusBadRequest)
+		return
+	}
+	if req.VoteChoice < 0 || req.VoteChoice > 255 {
+		http.Error(w, "voteChoice must be 0-255", http.StatusBadRequest)
+		return
+	}
+
+	// Find the vote record to get the stored commitment
+	votes, err := s.store.ListVotes(pollID)
+	if err != nil {
+		http.Error(w, "Failed to read votes", http.StatusInternalServerError)
+		return
+	}
+
+	var storedCommitment string
+	for _, v := range votes {
+		if v.Nullifier == req.Nullifier {
+			if v.Revealed {
+				http.Error(w, "Vote already revealed", http.StatusConflict)
+				return
+			}
+			storedCommitment = v.VoteCommitment
+			break
+		}
+	}
+	if storedCommitment == "" {
+		http.Error(w, "Vote not found for this nullifier", http.StatusNotFound)
+		return
+	}
+
+	// Verify: mimcHash(voterSecret, voteChoice) == storedCommitment
+	if err := prover.ValidateVoteReveal(req.VoterSecret, req.VoteChoice, storedCommitment); err != nil {
+		http.Error(w, fmt.Sprintf("Reveal verification failed: %v", err), http.StatusForbidden)
+		return
+	}
+
+	// Update the vote record
+	if err := s.store.RevealVote(pollID, req.Nullifier, req.VoteChoice); err != nil {
+		log.Printf("Failed to reveal vote: %v", err)
+		http.Error(w, "Failed to record reveal", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "revealed",
+		"choice": req.VoteChoice,
+	})
+}
+
 // handlePollResults returns the current tally for a poll.
+// During voting: only shows vote count and commitments (choices are secret).
+// After close + reveal: shows per-choice tallies.
 func (s *Server) handlePollResults(w http.ResponseWriter, r *http.Request) {
 	pollID := extractPollIDSegment(r.URL.Path, "results")
 	if pollID == "" {
@@ -314,19 +408,35 @@ func (s *Server) handlePollResults(w http.ResponseWriter, r *http.Request) {
 
 	votes, _ := s.store.ListVotes(pollID)
 	nullifiers := make([]string, len(votes))
+	commitments := make([]string, len(votes))
 	for i, v := range votes {
 		nullifiers[i] = v.Nullifier
+		commitments[i] = v.VoteCommitment
+	}
+
+	result := map[string]interface{}{
+		"pollId":      pollID,
+		"title":       poll.Title,
+		"choices":     poll.Choices,
+		"voteCount":   len(votes),
+		"nullifiers":  nullifiers,
+		"commitments": commitments,
+		"status":      poll.Status,
+	}
+
+	// Include tallies only from revealed votes
+	tally, revealedCount, _ := s.store.TallyRevealed(pollID)
+	if revealedCount > 0 {
+		choiceTallies := make([]int, len(poll.Choices))
+		for i := range choiceTallies {
+			choiceTallies[i] = tally[i]
+		}
+		result["tallies"] = choiceTallies
+		result["revealedCount"] = revealedCount
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"pollId":     pollID,
-		"title":      poll.Title,
-		"choices":    poll.Choices,
-		"voteCount":  len(votes),
-		"nullifiers": nullifiers,
-		"status":     poll.Status,
-	})
+	json.NewEncoder(w).Encode(result)
 }
 
 // handlePollNullifiers returns the public nullifier list for audit.

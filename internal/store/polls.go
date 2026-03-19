@@ -27,9 +27,13 @@ type Poll struct {
 
 // VoteRecord stores a verified vote submission.
 type VoteRecord struct {
-	Nullifier string    `json:"nullifier"`
-	Proof     string    `json:"proof"`
-	Timestamp time.Time `json:"timestamp"`
+	Nullifier      string    `json:"nullifier"`
+	VoteCommitment string    `json:"voteCommitment"`       // mimcHash(voterSecret, voteChoice) — blinded, can't reverse
+	Proof          string    `json:"proof"`
+	Timestamp      time.Time `json:"timestamp"`
+	// RevealedChoice is set after the voter reveals their choice post-close
+	RevealedChoice int       `json:"revealedChoice,omitempty"`
+	Revealed       bool      `json:"revealed,omitempty"`
 }
 
 // PollResults holds tallied results for a poll.
@@ -220,6 +224,64 @@ func (s *FSStore) ListPolls() ([]Poll, error) {
 	})
 
 	return polls, nil
+}
+
+// RevealVote updates a vote record with the revealed choice.
+func (s *FSStore) RevealVote(pollID string, nullifier string, choice int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	dir, err := s.votesDir(pollID)
+	if err != nil {
+		return err
+	}
+
+	cleanNull, err := sanitizePathComponent(nullifier)
+	if err != nil {
+		return fmt.Errorf("invalid nullifier: %w", err)
+	}
+
+	votePath := filepath.Join(dir, cleanNull+".json")
+	data, err := os.ReadFile(votePath)
+	if err != nil {
+		return fmt.Errorf("vote not found")
+	}
+
+	var vote VoteRecord
+	if err := json.Unmarshal(data, &vote); err != nil {
+		return err
+	}
+
+	if vote.Revealed {
+		return fmt.Errorf("vote already revealed")
+	}
+
+	vote.RevealedChoice = choice
+	vote.Revealed = true
+
+	out, err := json.MarshalIndent(vote, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(votePath, out, 0o644)
+}
+
+// TallyRevealed counts revealed votes by choice.
+func (s *FSStore) TallyRevealed(pollID string) (map[int]int, int, error) {
+	votes, err := s.ListVotes(pollID)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	tally := make(map[int]int)
+	revealed := 0
+	for _, v := range votes {
+		if v.Revealed {
+			tally[v.RevealedChoice]++
+			revealed++
+		}
+	}
+	return tally, revealed, nil
 }
 
 func isJSONFile(name string) bool {

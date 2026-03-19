@@ -5,6 +5,8 @@ import (
 	"math/big"
 
 	"github.com/consensys/gnark-crypto/ecc"
+	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
+	"github.com/consensys/gnark-crypto/ecc/bn254/fr/mimc"
 	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/backend/witness"
 	"github.com/consensys/gnark/frontend"
@@ -82,11 +84,11 @@ func VerifyVoteCastWitness(p *Prover, witnessData map[string]string) error {
 // ValidateVoteCastPublicInputs checks that a voteCast proof's public inputs
 // match the expected poll parameters.
 func ValidateVoteCastPublicInputs(publicInputs []string, expectedPollID, expectedRegistryRoot string) error {
-	if len(publicInputs) < 3 {
-		return fmt.Errorf("voteCast requires 3 public inputs (pollId, registryRoot, nullifier), got %d", len(publicInputs))
+	if len(publicInputs) < 4 {
+		return fmt.Errorf("voteCast requires 4 public inputs (pollId, registryRoot, nullifier, voteCommitment), got %d", len(publicInputs))
 	}
 
-	// Public inputs order matches circuit definition: PollID, VoterRegistryRoot, Nullifier
+	// Public inputs order matches circuit definition: PollID, VoterRegistryRoot, Nullifier, VoteCommitment
 	proofPollID := publicInputs[0]
 	proofRegistryRoot := publicInputs[1]
 
@@ -107,13 +109,14 @@ func buildPublicWitness(circuitName string, publicInputs []string) (witness.Witn
 	// Create a circuit assignment with only the public fields set
 	switch circuitName {
 	case "voteCast":
-		if len(publicInputs) < 3 {
-			return nil, fmt.Errorf("voteCast requires 3 public inputs, got %d", len(publicInputs))
+		if len(publicInputs) < 4 {
+			return nil, fmt.Errorf("voteCast requires 4 public inputs, got %d", len(publicInputs))
 		}
 		assignment := &VoteCastCircuit{
 			PollID:            parseBigIntOrZero(publicInputs[0]),
 			VoterRegistryRoot: parseBigIntOrZero(publicInputs[1]),
 			Nullifier:         parseBigIntOrZero(publicInputs[2]),
+			VoteCommitment:    parseBigIntOrZero(publicInputs[3]),
 		}
 		w, err := frontend.NewWitness(assignment, ecc.BN254.ScalarField(), frontend.PublicOnly())
 		if err != nil {
@@ -125,6 +128,22 @@ func buildPublicWitness(circuitName string, publicInputs []string) (witness.Witn
 	}
 }
 
+// ValidateVoteReveal checks that mimcHash(voterSecret, voteChoice) == storedCommitment.
+// This is used during the reveal phase after the poll closes.
+func ValidateVoteReveal(voterSecret string, voteChoice int, storedCommitment string) error {
+	secret := parseBigIntOrZero(voterSecret).(*big.Int)
+	choice := big.NewInt(int64(voteChoice))
+
+	// Compute mimcHash(voterSecret, voteChoice) using gnark-crypto's MiMC
+	computed := MiMCHashBigInt(secret, choice)
+
+	stored := parseBigIntOrZero(storedCommitment).(*big.Int)
+	if computed.Cmp(stored) != 0 {
+		return fmt.Errorf("commitment mismatch: mimcHash(secret, %d) != stored commitment", voteChoice)
+	}
+	return nil
+}
+
 // bigIntEqual compares two big.Int values given as hex or decimal strings.
 func bigIntEqual(a, b string) bool {
 	ai := parseBigIntOrZero(a)
@@ -133,6 +152,24 @@ func bigIntEqual(a, b string) bool {
 		return a == b
 	}
 	return ai.(*big.Int).Cmp(bi.(*big.Int)) == 0
+}
+
+// MiMCHashBigInt computes MiMC hash of two big.Int values.
+// Matches the gnark circuit's mimcHash exactly.
+func MiMCHashBigInt(a, b *big.Int) *big.Int {
+	var fa, fb fr.Element
+	fa.SetBigInt(a)
+	fb.SetBigInt(b)
+
+	h := mimc.NewMiMC()
+	ab := fa.Bytes()
+	bb := fb.Bytes()
+	h.Write(ab[:])
+	h.Write(bb[:])
+	sum := h.Sum(nil)
+
+	result := new(big.Int).SetBytes(sum)
+	return result
 }
 
 func parseBigIntOrZero(s string) interface{} {

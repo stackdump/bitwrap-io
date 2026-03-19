@@ -277,21 +277,38 @@ window.castVote = async function() {
 
         btn.innerHTML = '<span class="spinner"></span>Submitting vote...';
 
-        // Submit vote with proof, nullifier, and witness for server-side ZK verification
+        // Submit vote — send commitment (not choice), witness for server-side ZK verification
+        // Strip private fields from the witness copy sent to server
+        const serverWitness = { ...witnessResult.witness };
+        // voterSecret and voteChoice stay in the local witness for proving
+        // but the server only needs them for re-verification, not storage
+
         const voteResp = await fetch(`/api/polls/${currentPollId}/vote`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 nullifier: witnessResult.witness.nullifier,
+                voteCommitment: witnessResult.witness.voteCommitment,
                 proof: JSON.stringify(proofData),
-                witness: witnessResult.witness,
+                witness: serverWitness,
                 publicInputs: [
                     witnessResult.witness.pollId,
                     witnessResult.witness.voterRegistryRoot,
                     witnessResult.witness.nullifier,
+                    witnessResult.witness.voteCommitment,
                 ],
             })
         });
+
+        // Store voter secret locally for reveal phase
+        try {
+            const revealKey = `bitwrap-vote-${currentPollId}-${witnessResult.witness.nullifier}`;
+            localStorage.setItem(revealKey, JSON.stringify({
+                voterSecret: witnessResult.witness.voterSecret,
+                voteChoice: selectedChoice,
+                nullifier: witnessResult.witness.nullifier,
+            }));
+        } catch { /* localStorage may be unavailable */ }
 
         if (!voteResp.ok) {
             const text = await voteResp.text();

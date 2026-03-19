@@ -120,6 +120,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleListPolls(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/polls/") && strings.HasSuffix(r.URL.Path, "/vote") && r.Method == http.MethodPost:
 		s.handleCastVote(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/polls/") && strings.HasSuffix(r.URL.Path, "/reveal") && r.Method == http.MethodPost:
+		s.handleRevealVote(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/polls/") && strings.HasSuffix(r.URL.Path, "/results"):
 		s.handlePollResults(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/polls/") && strings.HasSuffix(r.URL.Path, "/nullifiers"):
@@ -595,7 +597,7 @@ var circuitDescriptions = map[string]struct {
 	"burn":         {"ERC-20 burn: proves balance >= amount", []string{"preStateRoot", "postStateRoot", "from", "amount"}},
 	"approve":      {"ERC-20 approve: proves owner == caller", []string{"preStateRoot", "postStateRoot", "caller", "spender", "amount"}},
 	"vestClaim":    {"Vesting claim: proves ownership and available amount", []string{"preStateRoot", "postStateRoot", "tokenID", "caller", "claimAmount"}},
-	"voteCast":     {"ZK vote: proves voter eligibility and valid choice without revealing identity", []string{"pollId", "voterRegistryRoot", "nullifier"}},
+	"voteCast":     {"ZK vote: proves voter eligibility and valid choice without revealing identity or choice", []string{"pollId", "voterRegistryRoot", "nullifier", "voteCommitment"}},
 }
 
 // handleCircuits lists available ZK circuits.

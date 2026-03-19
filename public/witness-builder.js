@@ -205,12 +205,16 @@ export function buildVoteCastWitness({ tree, voterIdx, pollId, voterSecret, vote
   // Nullifier: deterministic per voter per poll, unlinkable across polls
   const nullifier = mimcHash(voterSecret, pollId);
 
+  // Vote commitment: binds choice to voter secret (blinded — can't brute-force)
+  const voteCommitment = mimcHash(voterSecret, voteChoice);
+
   return {
     circuit: 'voteCast',
     witness: {
       pollId: fieldStr(pollId),
       voterRegistryRoot: fieldStr(voterRegistryRoot),
       nullifier: fieldStr(nullifier),
+      voteCommitment: fieldStr(voteCommitment),
       voterSecret: fieldStr(voterSecret),
       voteChoice: fieldStr(voteChoice),
       voterWeight: fieldStr(voterWeight),

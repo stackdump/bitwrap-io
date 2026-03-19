@@ -34,7 +34,7 @@ func (g *generator) generate() string {
 		b.WriteString("        uint256[2] calldata _pA,\n")
 		b.WriteString("        uint256[2][2] calldata _pB,\n")
 		b.WriteString("        uint256[2] calldata _pC,\n")
-		b.WriteString("        uint256[3] calldata _pubSignals\n")
+		b.WriteString("        uint256[4] calldata _pubSignals\n")
 		b.WriteString("    ) external view returns (bool);\n")
 		b.WriteString("}\n\n")
 	}
@@ -152,43 +152,47 @@ func (g *generator) generateConstructor() string {
 }
 
 // generateVoteCastFunction generates the ZK-verified castVote function.
+// The vote choice is hidden inside the voteCommitment — ballot secrecy is enforced.
 func (g *generator) generateVoteCastFunction() string {
 	var b strings.Builder
 
-	b.WriteString("    // ============ castVote (ZK-verified) ============\n\n")
+	b.WriteString("    // ============ castVote (ZK-verified, secret ballot) ============\n\n")
 	b.WriteString("    /// @notice Cast a vote with a Groth16 ZK proof of eligibility\n")
+	b.WriteString("    /// @dev The vote choice is hidden inside _voteCommitment = mimcHash(voterSecret, choice)\n")
+	b.WriteString("    /// @dev Tallying requires voters to reveal their choice after the poll closes\n")
 	b.WriteString("    /// @param _pA Proof point A\n")
 	b.WriteString("    /// @param _pB Proof point B\n")
 	b.WriteString("    /// @param _pC Proof point C\n")
 	b.WriteString("    /// @param _nullifier The voter's unique nullifier (prevents double voting)\n")
-	b.WriteString("    /// @param _choice The vote choice index\n")
+	b.WriteString("    /// @param _voteCommitment Blinded vote commitment (hides the actual choice)\n")
 	b.WriteString("    /// @param _pollId The poll identifier (must match this contract's poll)\n")
 	b.WriteString("    function castVote(\n")
 	b.WriteString("        uint256[2] calldata _pA,\n")
 	b.WriteString("        uint256[2][2] calldata _pB,\n")
 	b.WriteString("        uint256[2] calldata _pC,\n")
 	b.WriteString("        uint256 _nullifier,\n")
-	b.WriteString("        uint256 _choice,\n")
+	b.WriteString("        uint256 _voteCommitment,\n")
 	b.WriteString("        uint256 _pollId\n")
 	b.WriteString("    ) external {\n")
 	b.WriteString("        require(pollConfig == 1, \"poll not active\");\n")
 	b.WriteString("        require(!nullifiers[_nullifier], \"already voted\");\n")
 	b.WriteString("\n")
-	b.WriteString("        // Verify ZK proof: public inputs are [pollId, voterRegistryRoot, nullifier]\n")
-	b.WriteString("        uint256[3] memory pubSignals;\n")
+	b.WriteString("        // Verify ZK proof: public inputs are [pollId, voterRegistryRoot, nullifier, voteCommitment]\n")
+	b.WriteString("        uint256[4] memory pubSignals;\n")
 	b.WriteString("        pubSignals[0] = _pollId;\n")
 	b.WriteString("        pubSignals[1] = voterRegistryRoot;\n")
 	b.WriteString("        pubSignals[2] = _nullifier;\n")
+	b.WriteString("        pubSignals[3] = _voteCommitment;\n")
 	b.WriteString("        require(\n")
 	b.WriteString("            verifier.verifyProof(_pA, _pB, _pC, pubSignals),\n")
 	b.WriteString("            \"invalid ZK proof\"\n")
 	b.WriteString("        );\n")
 	b.WriteString("\n")
-	b.WriteString("        // Record vote\n")
+	b.WriteString("        // Record vote — choice is hidden in commitment, revealed later\n")
 	b.WriteString("        nullifiers[_nullifier] = true;\n")
-	b.WriteString("        tallies[_choice] += 1;\n")
+	b.WriteString("        voteCommitments[_nullifier] = _voteCommitment;\n")
 	b.WriteString("\n")
-	b.WriteString("        emit CastVote(currentEpoch, eventSequence++, _nullifier, _choice);\n")
+	b.WriteString("        emit CastVote(currentEpoch, eventSequence++, _nullifier, _voteCommitment);\n")
 	b.WriteString("    }\n\n")
 
 	return b.String()
@@ -276,11 +280,12 @@ func (g *generator) generateStateVariables() string {
 	// Add event sequence counter for debugging
 	b.WriteString("    uint256 internal eventSequence;\n")
 
-	// Vote-specific: voter registry root and verifier
+	// Vote-specific: voter registry root, verifier, and vote commitments
 	if g.isVoteSchema() {
 		b.WriteString("\n    // ZK Voter Registry and Verifier\n")
 		b.WriteString("    uint256 public voterRegistryRoot;\n")
 		b.WriteString("    IVerifier public verifier;\n")
+		b.WriteString("    mapping(uint256 => uint256) public voteCommitments; // nullifier => blinded vote commitment\n")
 	}
 
 	for _, state := range g.schema.States {
