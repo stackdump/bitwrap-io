@@ -192,6 +192,10 @@ async function loadPoll(pollId) {
         const choicesDiv = document.getElementById('vote-choices');
         selectedChoice = null;
 
+        const btnVote = document.getElementById('btn-vote');
+        const btnClose = document.getElementById('btn-close');
+        const btnReveal = document.getElementById('btn-reveal');
+
         if (poll.status === 'active') {
             choicesDiv.innerHTML = poll.choices.map((c, i) => `
                 <label class="choice-option" data-idx="${i}" onclick="selectChoice(this, ${i})">
@@ -199,10 +203,27 @@ async function loadPoll(pollId) {
                     <span class="choice-label">${esc(c)}</span>
                 </label>
             `).join('');
-            document.getElementById('btn-vote').style.display = '';
+            btnVote.style.display = '';
+            btnReveal.style.display = 'none';
+
+            // Show close button if current wallet is the creator
+            btnClose.style.display = 'none';
+            if (window.ethereum && poll.creator) {
+                window.ethereum.request({ method: 'eth_accounts' }).then(accts => {
+                    if (accts.length > 0 && accts[0].toLowerCase() === poll.creator.toLowerCase()) {
+                        btnClose.style.display = '';
+                    }
+                }).catch(() => {});
+            }
         } else {
-            choicesDiv.innerHTML = '<p style="color:var(--text-muted);">This poll is closed.</p>';
-            document.getElementById('btn-vote').style.display = 'none';
+            // Poll closed — show reveal UI if voter has a stored secret
+            choicesDiv.innerHTML = '<p style="color:var(--text-muted);">This poll is closed. Reveal your vote to be counted in the tally.</p>';
+            btnVote.style.display = 'none';
+            btnClose.style.display = 'none';
+
+            // Check if we have a stored reveal key
+            const hasRevealData = findRevealData(pollId);
+            btnReveal.style.display = hasRevealData ? '' : 'none';
         }
     } catch (err) {
         showMsg('Failed to load poll: ' + err.message, 'error');
@@ -328,6 +349,97 @@ window.castVote = async function() {
     }
 };
 
+// ============ Close Poll ============
+
+window.closePoll = async function() {
+    if (!window.ethereum) return showMsg('Wallet required to close poll', 'error');
+
+    const btn = document.getElementById('btn-close');
+    btn.disabled = true;
+    btn.textContent = 'Signing...';
+
+    try {
+        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        const creator = accounts[0];
+        const sigMsg = 'bitwrap-close-poll:' + currentPollId;
+        const signature = await window.ethereum.request({
+            method: 'personal_sign',
+            params: [sigMsg, creator]
+        });
+
+        btn.textContent = 'Closing...';
+        const resp = await fetch(`/api/polls/${currentPollId}/close`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ creator, signature })
+        });
+
+        if (!resp.ok) throw new Error(await resp.text());
+
+        showMsg('Poll closed. Voters can now reveal their choices to build the tally.', 'success');
+        loadPoll(currentPollId);
+    } catch (err) {
+        showMsg('Close failed: ' + err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Close Poll';
+    }
+};
+
+// ============ Reveal Vote ============
+
+function findRevealData(pollId) {
+    try {
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith(`bitwrap-vote-${pollId}-`)) {
+                return JSON.parse(localStorage.getItem(key));
+            }
+        }
+    } catch { /* localStorage may be unavailable */ }
+    return null;
+}
+
+window.revealVote = async function() {
+    const revealData = findRevealData(currentPollId);
+    if (!revealData) return showMsg('No stored vote found for this poll. You can only reveal from the browser you voted from.', 'error');
+
+    const btn = document.getElementById('btn-reveal');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Revealing...';
+
+    try {
+        const resp = await fetch(`/api/polls/${currentPollId}/reveal`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                nullifier: revealData.nullifier,
+                voteChoice: revealData.voteChoice,
+                voterSecret: revealData.voterSecret,
+            })
+        });
+
+        if (!resp.ok) {
+            const text = await resp.text();
+            throw new Error(text);
+        }
+
+        showMsg('Vote revealed! Your choice has been added to the tally.', 'success');
+        btn.style.display = 'none';
+
+        // Clean up stored reveal data
+        try {
+            const key = `bitwrap-vote-${currentPollId}-${revealData.nullifier}`;
+            localStorage.removeItem(key);
+        } catch { /* ignore */ }
+    } catch (err) {
+        showMsg('Reveal failed: ' + err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Reveal My Vote';
+    }
+};
+
 // ============ Results ============
 
 async function loadResults(pollId) {
@@ -340,26 +452,52 @@ async function loadResults(pollId) {
 
         const choices = data.choices || [];
         const voteCount = data.voteCount || 0;
+        const tallies = data.tallies || null;
+        const revealedCount = data.revealedCount || 0;
         const barsDiv = document.getElementById('results-bars');
 
-        // For now, show total vote count per-poll (individual choice tallying
-        // requires decrypting vote commitments in Phase 5)
-        barsDiv.innerHTML = choices.map((c, i) => {
-            const pct = voteCount > 0 ? Math.round(100 / choices.length) : 0;
-            return `
+        if (tallies && revealedCount > 0) {
+            // Show real tallies from revealed votes
+            const maxVotes = Math.max(...tallies, 1);
+            barsDiv.innerHTML = choices.map((c, i) => {
+                const count = tallies[i] || 0;
+                const pct = Math.round((count / maxVotes) * 100);
+                return `
+                    <div class="result-bar">
+                        <div class="result-label">
+                            <span>${esc(c)}</span>
+                            <span>${count} vote${count !== 1 ? 's' : ''}</span>
+                        </div>
+                        <div class="result-track">
+                            <div class="result-fill" style="width:${Math.max(pct, 2)}%"></div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        } else {
+            // No reveals yet — show placeholders
+            barsDiv.innerHTML = choices.map(c => `
                 <div class="result-bar">
                     <div class="result-label">
                         <span>${esc(c)}</span>
-                        <span style="color:var(--text-muted);">-</span>
+                        <span style="color:var(--text-muted);">hidden</span>
                     </div>
                     <div class="result-track">
-                        <div class="result-fill" style="width:${voteCount > 0 ? Math.max(pct, 5) : 0}%"></div>
+                        <div class="result-fill" style="width:0%"></div>
                     </div>
                 </div>
-            `;
-        }).join('');
+            `).join('');
+        }
 
-        document.getElementById('results-total').textContent = `${voteCount} total votes \u00b7 ${data.status}`;
+        let statusText = `${voteCount} total votes \u00b7 ${data.status}`;
+        if (revealedCount > 0) {
+            statusText += ` \u00b7 ${revealedCount}/${voteCount} revealed`;
+        } else if (voteCount > 0 && data.status === 'closed') {
+            statusText += ' \u00b7 awaiting reveals';
+        } else if (voteCount > 0 && data.status === 'active') {
+            statusText += ' \u00b7 choices hidden until poll closes';
+        }
+        document.getElementById('results-total').textContent = statusText;
 
         // Nullifiers
         const nullifiers = data.nullifiers || [];

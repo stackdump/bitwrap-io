@@ -199,9 +199,11 @@
 
             <div id="vote-choices"></div>
 
-            <div style="margin-top:24px; display:flex; gap:12px; align-items:center;">
+            <div style="margin-top:24px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
                 <button class="btn-primary" id="btn-vote" onclick="castVote()">Cast Vote</button>
+                <button class="btn-primary" id="btn-reveal" onclick="revealVote()" style="display:none; background:#6495ed;">Reveal My Vote</button>
                 <button class="btn-secondary" onclick="showResults(currentPollId)">View Results</button>
+                <button class="btn-secondary" id="btn-close" onclick="closePoll()" style="display:none; margin-left:0; border-color:#ff8844; color:#ff8844;">Close Poll</button>
             </div>
 
             <a class="view-model-link" href="/editor?template=vote">View Petri Net Model &rarr;</a>

@@ -311,6 +311,61 @@ func (s *Server) handleCastVote(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
 }
 
+// handleClosePoll allows the poll creator to close it (requires wallet signature).
+func (s *Server) handleClosePoll(w http.ResponseWriter, r *http.Request) {
+	pollID := extractPollID(r.URL.Path)
+	if pollID == "" {
+		http.Error(w, "Poll ID required", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Creator   string `json:"creator"`
+		Signature string `json:"signature"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	poll, err := s.store.ReadPoll(pollID)
+	if err != nil {
+		http.Error(w, "Poll not found", http.StatusNotFound)
+		return
+	}
+
+	if poll.Status != "active" {
+		http.Error(w, "Poll is not active", http.StatusBadRequest)
+		return
+	}
+
+	// Verify the closer is the creator
+	if req.Creator == "" || req.Signature == "" {
+		http.Error(w, "creator and signature required", http.StatusBadRequest)
+		return
+	}
+	sigMsg := "bitwrap-close-poll:" + pollID
+	recovered, err := RecoverAddress(sigMsg, req.Signature)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("signature verification failed: %v", err), http.StatusForbidden)
+		return
+	}
+	if !strings.EqualFold(recovered, poll.Creator) {
+		http.Error(w, "only the poll creator can close it", http.StatusForbidden)
+		return
+	}
+
+	poll.Status = "closed"
+	if err := s.store.SavePoll(poll); err != nil {
+		http.Error(w, "Failed to close poll", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "closed"})
+}
+
 // handleRevealVote allows a voter to reveal their choice after the poll closes.
 // Verifies mimcHash(voterSecret, voteChoice) == storedCommitment.
 func (s *Server) handleRevealVote(w http.ResponseWriter, r *http.Request) {
