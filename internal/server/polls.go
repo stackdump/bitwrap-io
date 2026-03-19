@@ -307,6 +307,15 @@ func (s *Server) handleCastVote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Tally at vote time — extract choice from witness (seen transiently, never persisted per-vote)
+	if choiceStr, ok := req.Witness["voteChoice"]; ok {
+		choice := 0
+		fmt.Sscanf(choiceStr, "%d", &choice)
+		if choice >= 0 && choice < len(poll.Choices) {
+			_ = s.store.IncrementTally(pollID, choice)
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
 }
@@ -487,7 +496,7 @@ func (s *Server) handlePollResults(w http.ResponseWriter, r *http.Request) {
 			choiceTallies[i] = tally.Counts[fmt.Sprintf("%d", i)]
 		}
 		result["tallies"] = choiceTallies
-		result["revealedCount"] = tally.RevealedTotal
+		result["talliedCount"] = tally.RevealedTotal
 	}
 
 	w.Header().Set("Content-Type", "application/json")

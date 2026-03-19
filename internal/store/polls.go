@@ -286,6 +286,14 @@ func (s *FSStore) tallyPath(pollID string) (string, error) {
 	return filepath.Join(s.pollDir(), clean, "tally.json"), nil
 }
 
+// IncrementTally adds one vote to the aggregate tally for a choice.
+// The tally file only contains totals — no link to individual voters.
+func (s *FSStore) IncrementTally(pollID string, choice int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.incrementTally(pollID, choice)
+}
+
 func (s *FSStore) incrementTally(pollID string, choice int) error {
 	path, err := s.tallyPath(pollID)
 	if err != nil {

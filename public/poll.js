@@ -453,10 +453,10 @@ async function loadResults(pollId) {
         const choices = data.choices || [];
         const voteCount = data.voteCount || 0;
         const tallies = data.tallies || null;
-        const revealedCount = data.revealedCount || 0;
+        const talliedCount = data.talliedCount || 0;
         const barsDiv = document.getElementById('results-bars');
 
-        if (tallies && revealedCount > 0) {
+        if (tallies && talliedCount > 0) {
             // Show real tallies from revealed votes
             const maxVotes = Math.max(...tallies, 1);
             barsDiv.innerHTML = choices.map((c, i) => {
@@ -490,12 +490,8 @@ async function loadResults(pollId) {
         }
 
         let statusText = `${voteCount} total votes \u00b7 ${data.status}`;
-        if (revealedCount > 0) {
-            statusText += ` \u00b7 ${revealedCount}/${voteCount} revealed`;
-        } else if (voteCount > 0 && data.status === 'closed') {
-            statusText += ' \u00b7 awaiting reveals';
-        } else if (voteCount > 0 && data.status === 'active') {
-            statusText += ' \u00b7 choices hidden until poll closes';
+        if (talliedCount > 0 && talliedCount < voteCount) {
+            statusText += ` \u00b7 ${talliedCount}/${voteCount} tallied`;
         }
         document.getElementById('results-total').textContent = statusText;
 
