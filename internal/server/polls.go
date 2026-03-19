@@ -162,6 +162,9 @@ func (s *Server) handleCreatePoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Append createPoll event to the Petri net event log
+	_ = s.store.AppendEvent(pollID, store.PollEvent{Action: "createPoll"})
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"id":  pollID,
@@ -307,13 +310,16 @@ func (s *Server) handleCastVote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Tally at vote time — extract choice from witness (seen transiently, never persisted per-vote)
+	// Append castVote event to the poll's event log — state derived via Petri net runtime
 	if choiceStr, ok := req.Witness["voteChoice"]; ok {
-		choice := 0
-		fmt.Sscanf(choiceStr, "%d", &choice)
-		if choice >= 0 && choice < len(poll.Choices) {
-			_ = s.store.IncrementTally(pollID, choice)
-		}
+		_ = s.store.AppendEvent(pollID, store.PollEvent{
+			Action: "castVote",
+			Bindings: map[string]string{
+				"nullifier": req.Nullifier,
+				"choice":    choiceStr,
+				"weight":    "1",
+			},
+		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -370,6 +376,9 @@ func (s *Server) handleClosePoll(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to close poll", http.StatusInternalServerError)
 		return
 	}
+
+	// Append closePoll event to the Petri net event log
+	_ = s.store.AppendEvent(pollID, store.PollEvent{Action: "closePoll"})
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "closed"})
@@ -488,15 +497,27 @@ func (s *Server) handlePollResults(w http.ResponseWriter, r *http.Request) {
 		"status":      poll.Status,
 	}
 
-	// Include aggregate tallies (no individual voter linkage)
-	tally, err := s.store.ReadTally(pollID)
-	if err == nil && tally.RevealedTotal > 0 {
-		choiceTallies := make([]int, len(poll.Choices))
-		for i := range choiceTallies {
-			choiceTallies[i] = tally.Counts[fmt.Sprintf("%d", i)]
+	// Derive tallies from the Petri net event log (event sourcing)
+	events, _ := s.store.ReadEvents(pollID)
+	if len(events) > 0 {
+		pollEvents := make([]PollEvent, len(events))
+		for i, e := range events {
+			pollEvents[i] = PollEvent{Action: e.Action, Bindings: e.Bindings}
 		}
-		result["tallies"] = choiceTallies
-		result["talliedCount"] = tally.RevealedTotal
+		rt := PollRuntime(pollEvents)
+		tallies := PollTallies(rt, len(poll.Choices))
+
+		// Check if any votes have been tallied
+		var tallied int64
+		choiceTallies := make([]int64, len(tallies))
+		for i, t := range tallies {
+			choiceTallies[i] = t
+			tallied += t
+		}
+		if tallied > 0 {
+			result["tallies"] = choiceTallies
+			result["talliedCount"] = tallied
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

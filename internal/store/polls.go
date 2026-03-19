@@ -346,6 +346,65 @@ func (s *FSStore) ReadTally(pollID string) (*AggregateTally, error) {
 	return &tally, nil
 }
 
+// PollEvent represents a single action fired on a poll's state machine.
+type PollEvent struct {
+	Action   string            `json:"action"`
+	Bindings map[string]string `json:"bindings,omitempty"`
+}
+
+// AppendEvent appends an event to a poll's event log.
+func (s *FSStore) AppendEvent(pollID string, event PollEvent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	clean, err := sanitizePathComponent(pollID)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(s.pollDir(), clean)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+
+	eventsPath := filepath.Join(dir, "events.json")
+
+	var events []PollEvent
+	if data, err := os.ReadFile(eventsPath); err == nil {
+		_ = json.Unmarshal(data, &events)
+	}
+
+	events = append(events, event)
+
+	out, err := json.MarshalIndent(events, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(eventsPath, out, 0o644)
+}
+
+// ReadEvents returns all events for a poll.
+func (s *FSStore) ReadEvents(pollID string) ([]PollEvent, error) {
+	clean, err := sanitizePathComponent(pollID)
+	if err != nil {
+		return nil, err
+	}
+	eventsPath := filepath.Join(s.pollDir(), clean, "events.json")
+
+	data, err := os.ReadFile(eventsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var events []PollEvent
+	if err := json.Unmarshal(data, &events); err != nil {
+		return nil, err
+	}
+	return events, nil
+}
+
 func isJSONFile(name string) bool {
 	return len(name) > 5 && name[len(name)-5:] == ".json"
 }

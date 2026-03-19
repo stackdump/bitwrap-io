@@ -27,10 +27,10 @@ func NewVote(name string) *Vote {
 	schema.AddAction(metamodel.Action{ID: "closePoll", Guard: "pollConfig == 1", EventID: "PollClosed"})
 
 	// Arcs
-	// castVote -> tallies (each vote counts as 1)
-	schema.AddArc(metamodel.Arc{Source: "castVote", Target: "tallies", Keys: []string{"choice"}, Value: "1"})
-	// castVote -> nullifiers (mark nullifier as used to prevent double-voting)
-	schema.AddArc(metamodel.Arc{Source: "castVote", Target: "nullifiers", Keys: []string{"nullifier"}, Value: "true"})
+	// castVote -> tallies (increment vote count for chosen option)
+	schema.AddArc(metamodel.Arc{Source: "castVote", Target: "tallies", Keys: []string{"choice"}, Value: "weight"})
+	// castVote -> nullifiers (mark nullifier as used — weight=1 means "set to 1/true")
+	schema.AddArc(metamodel.Arc{Source: "castVote", Target: "nullifiers", Keys: []string{"nullifier"}, Value: "weight"})
 	// Note: voterRegistry is verified via ZK proof (Merkle inclusion), not via on-chain arc
 
 	// Events
