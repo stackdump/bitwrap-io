@@ -121,8 +121,8 @@ func TestTemplatesList(t *testing.T) {
 	}
 	var resp map[string][]Template
 	json.Unmarshal(w.Body.Bytes(), &resp)
-	if len(resp["templates"]) != 5 {
-		t.Fatalf("expected 5 templates, got %d", len(resp["templates"]))
+	if len(resp["templates"]) != 6 {
+		t.Fatalf("expected 6 templates, got %d", len(resp["templates"]))
 	}
 }
 

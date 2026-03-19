@@ -224,6 +224,39 @@ func (f *ArcnetWitnessFactory) CreateAssignment(circuitName string, witness map[
 		}
 		return assignment, nil
 
+	case "voteCast":
+		assignment := &VoteCastCircuit{}
+		var err error
+		if assignment.PollID, err = goprover.ParseWitnessField(witness, "pollId"); err != nil {
+			return nil, err
+		}
+		if assignment.VoterRegistryRoot, err = goprover.ParseWitnessField(witness, "voterRegistryRoot"); err != nil {
+			return nil, err
+		}
+		if assignment.Nullifier, err = goprover.ParseWitnessField(witness, "nullifier"); err != nil {
+			return nil, err
+		}
+		if assignment.VoterSecret, err = goprover.ParseWitnessField(witness, "voterSecret"); err != nil {
+			return nil, err
+		}
+		if assignment.VoteChoice, err = goprover.ParseWitnessField(witness, "voteChoice"); err != nil {
+			return nil, err
+		}
+		if assignment.VoterWeight, err = goprover.ParseWitnessField(witness, "voterWeight"); err != nil {
+			return nil, err
+		}
+		for i := 0; i < 20; i++ {
+			key := fmt.Sprintf("pathElement%d", i)
+			if assignment.PathElements[i], err = goprover.ParseWitnessField(witness, key); err != nil {
+				return nil, err
+			}
+			key = fmt.Sprintf("pathIndex%d", i)
+			if assignment.PathIndices[i], err = goprover.ParseWitnessField(witness, key); err != nil {
+				return nil, err
+			}
+		}
+		return assignment, nil
+
 	default:
 		return nil, fmt.Errorf("unknown circuit: %s", circuitName)
 	}
@@ -273,5 +306,6 @@ func standardCircuits() map[string]frontend.Circuit {
 		"burn":         &BurnCircuit{},
 		"approve":      &ApproveCircuit{},
 		"vestClaim":    &VestingClaimCircuit{},
+		"voteCast":     &VoteCastCircuit{},
 	}
 }

@@ -4,7 +4,8 @@ import { mimcHash } from './mimc.js';
 import { MerkleTree } from './merkle.js';
 import {
     buildTransferWitness, buildMintWitness, buildBurnWitness,
-    buildApproveWitness, buildTransferFromWitness, buildVestClaimWitness
+    buildApproveWitness, buildTransferFromWitness, buildVestClaimWitness,
+    buildVoteCastWitness
 } from './witness-builder.js';
 
 const petriView = document.querySelector('petri-view');
@@ -246,6 +247,21 @@ function collectWitness(circuitName) {
             scheduleTree, ownerTree, tokenID, caller: owner, claimAmount,
             vestedAmount, claimed, owner, scheduleIdx: 0, ownerIdx: 0
         });
+    }
+    case 'voteCast': {
+        const input = prompt(
+            'VoteCast witness (comma-separated):\n' +
+            'pollId, voterSecret, voteChoice, voterWeight\n\n' +
+            'Example: 1, 12345, 2, 1'
+        );
+        if (!input) return null;
+        const [pollId, voterSecret, voteChoice, voterWeight] = input.split(',').map(s => BigInt(s.trim()));
+
+        // Build voter commitment leaf and Merkle tree
+        const leaf = mimcHash(voterSecret, voterWeight);
+        const tree = MerkleTree.fromLeaves([leaf], 20);
+
+        return buildVoteCastWitness({ tree, voterIdx: 0, pollId, voterSecret, voteChoice, voterWeight });
     }
     default:
         alert(`No witness builder for circuit: ${circuitName}`);

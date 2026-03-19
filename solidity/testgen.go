@@ -34,9 +34,17 @@ func (g *testGenerator) generate() string {
 	b.WriteString("    address bob = address(0x2);\n")
 	b.WriteString("    address charlie = address(0x3);\n\n")
 
-	b.WriteString("    function setUp() public {\n")
-	b.WriteString(fmt.Sprintf("        token = new %s();\n", contractName))
-	b.WriteString("    }\n\n")
+	if strings.HasPrefix(g.schema.Version, "Vote:") {
+		b.WriteString("\n    function setUp() public {\n")
+		b.WriteString("        // Deploy a mock verifier that always returns true\n")
+		b.WriteString("        address mockVerifier = address(new MockVerifier());\n")
+		b.WriteString(fmt.Sprintf("        token = new %s(0, mockVerifier);\n", contractName))
+		b.WriteString("    }\n\n")
+	} else {
+		b.WriteString("    function setUp() public {\n")
+		b.WriteString(fmt.Sprintf("        token = new %s();\n", contractName))
+		b.WriteString("    }\n\n")
+	}
 
 	for _, action := range g.schema.Actions {
 		b.WriteString(g.generateActionTest(action))
@@ -46,6 +54,21 @@ func (g *testGenerator) generate() string {
 	b.WriteString(g.generateViewTests())
 
 	b.WriteString("}\n")
+
+	// Vote-specific: add MockVerifier helper contract
+	if strings.HasPrefix(g.schema.Version, "Vote:") {
+		b.WriteString("\n/// @dev Mock verifier that always returns true (for testing only)\n")
+		b.WriteString("contract MockVerifier {\n")
+		b.WriteString("    function verifyProof(\n")
+		b.WriteString("        uint256[2] calldata,\n")
+		b.WriteString("        uint256[2][2] calldata,\n")
+		b.WriteString("        uint256[2] calldata,\n")
+		b.WriteString("        uint256[3] calldata\n")
+		b.WriteString("    ) external pure returns (bool) {\n")
+		b.WriteString("        return true;\n")
+		b.WriteString("    }\n")
+		b.WriteString("}\n")
+	}
 
 	if len(g.schema.Constraints) > 0 {
 		b.WriteString("\n")
@@ -59,9 +82,33 @@ func (g *testGenerator) generateActionTest(action metamodel.Action) string {
 	var b strings.Builder
 
 	funcName := action.ID
-	params := g.inferTestParams(action)
 
+	// Vote-specific: castVote has ZK proof signature
+	if strings.HasPrefix(g.schema.Version, "Vote:") && funcName == "castVote" {
+		b.WriteString("    function test_castVote() public {\n")
+		b.WriteString("        // Setup: create poll first\n")
+		b.WriteString("        token.createPoll();\n")
+		b.WriteString("        // Cast vote with mock proof (mock verifier always returns true)\n")
+		b.WriteString("        uint256[2] memory pA = [uint256(0), uint256(0)];\n")
+		b.WriteString("        uint256[2][2] memory pB = [[uint256(0), uint256(0)], [uint256(0), uint256(0)]];\n")
+		b.WriteString("        uint256[2] memory pC = [uint256(0), uint256(0)];\n")
+		b.WriteString("        vm.prank(alice);\n")
+		b.WriteString("        token.castVote(pA, pB, pC, 42, 1, 0);\n")
+		b.WriteString("        // Verify nullifier is used and tally incremented\n")
+		b.WriteString("        assertTrue(token.isNullifierUsed(42));\n")
+		b.WriteString("        assertEq(token.getTally(1), 1);\n")
+		b.WriteString("    }\n\n")
+		return b.String()
+	}
+
+	params := g.inferTestParams(action)
 	b.WriteString(fmt.Sprintf("    function test_%s() public {\n", funcName))
+
+	// Vote-specific: closePoll needs poll to be active first
+	if strings.HasPrefix(g.schema.Version, "Vote:") && funcName == "closePoll" {
+		b.WriteString("        // Setup: create poll first (as owner)\n")
+		b.WriteString("        token.createPoll();\n")
+	}
 
 	// Setup: if action is privileged, prank as owner
 	if isPrivilegedAction(funcName) {
@@ -94,6 +141,32 @@ func (g *testGenerator) generateRevertTests() string {
 		}
 
 		funcName := action.ID
+
+		// Vote-specific: castVote revert test uses ZK proof signature
+		if strings.HasPrefix(g.schema.Version, "Vote:") && funcName == "castVote" {
+			b.WriteString("    function test_castVote_reverts_on_double_vote() public {\n")
+			b.WriteString("        token.createPoll();\n")
+			b.WriteString("        uint256[2] memory pA;\n")
+			b.WriteString("        uint256[2][2] memory pB;\n")
+			b.WriteString("        uint256[2] memory pC;\n")
+			b.WriteString("        // First vote succeeds\n")
+			b.WriteString("        token.castVote(pA, pB, pC, 42, 1, 0);\n")
+			b.WriteString("        // Second vote with same nullifier reverts\n")
+			b.WriteString("        vm.expectRevert(\"already voted\");\n")
+			b.WriteString("        token.castVote(pA, pB, pC, 42, 0, 0);\n")
+			b.WriteString("    }\n\n")
+
+			b.WriteString("    function test_castVote_reverts_when_poll_inactive() public {\n")
+			b.WriteString("        // Poll not started — pollConfig == 0\n")
+			b.WriteString("        uint256[2] memory pA;\n")
+			b.WriteString("        uint256[2][2] memory pB;\n")
+			b.WriteString("        uint256[2] memory pC;\n")
+			b.WriteString("        vm.expectRevert(\"poll not active\");\n")
+			b.WriteString("        token.castVote(pA, pB, pC, 42, 1, 0);\n")
+			b.WriteString("    }\n\n")
+			continue
+		}
+
 		b.WriteString(fmt.Sprintf("    function test_%s_reverts_on_invalid_guard() public {\n", funcName))
 		b.WriteString("        vm.expectRevert();\n")
 
@@ -134,8 +207,12 @@ func (g *testGenerator) generateViewTests() string {
 			continue
 		}
 		if strings.HasPrefix(state.Type, "map[") {
-			// Map types need a key argument
-			b.WriteString(fmt.Sprintf("        token.%s(alice);\n", state.ID))
+			// Map types need a key argument — determine key type
+			keyArg := "alice" // default: address key
+			if strings.HasPrefix(state.Type, "map[uint256]") {
+				keyArg = "1"
+			}
+			b.WriteString(fmt.Sprintf("        token.%s(%s);\n", state.ID, keyArg))
 		} else {
 			b.WriteString(fmt.Sprintf("        token.%s();\n", state.ID))
 		}
@@ -152,7 +229,11 @@ func (g *testGenerator) generateInvariantTests(contractName string) string {
 	b.WriteString(fmt.Sprintf("    %s public token;\n\n", contractName))
 
 	b.WriteString("    function setUp() public {\n")
-	b.WriteString(fmt.Sprintf("        token = new %s();\n", contractName))
+	if strings.HasPrefix(g.schema.Version, "Vote:") {
+		b.WriteString(fmt.Sprintf("        token = new %s(0, address(new MockVerifier()));\n", contractName))
+	} else {
+		b.WriteString(fmt.Sprintf("        token = new %s();\n", contractName))
+	}
 	b.WriteString("        targetContract(address(token));\n")
 	b.WriteString("    }\n\n")
 
@@ -241,11 +322,15 @@ func (g *testGenerator) inferTestParams(action metamodel.Action) string {
 		}
 	}
 
-	// Add guard-extracted params
+	// Add guard-extracted params (excluding state variables and literals)
 	if action.Guard != "" {
 		guardParams := extractGuardParams(action.Guard)
+		for _, state := range g.schema.States {
+			delete(guardParams, state.ID)
+		}
+		delete(guardParams, "caller")
 		for name := range guardParams {
-			if _, exists := params[name]; !exists {
+			if _, exists := params[name]; !exists && !isLiteralValue(name) {
 				parts = append(parts, "alice")
 			}
 		}
@@ -291,7 +376,7 @@ func collectArcParams(schema *metamodel.Schema, actionID string) map[string]stri
 		for _, key := range arc.Keys {
 			params[key] = inferParamType(key)
 		}
-		if arc.Value != "" {
+		if arc.Value != "" && !isLiteralValue(arc.Value) {
 			params[arc.Value] = "uint256"
 		}
 	}
@@ -300,17 +385,23 @@ func collectArcParams(schema *metamodel.Schema, actionID string) map[string]stri
 		for _, key := range arc.Keys {
 			params[key] = inferParamType(key)
 		}
-		if arc.Value != "" {
+		if arc.Value != "" && !isLiteralValue(arc.Value) {
 			params[arc.Value] = "uint256"
 		}
 	}
+
+	// Remove state variable names — these are contract storage, not function params
+	for _, state := range schema.States {
+		delete(params, state.ID)
+	}
+	delete(params, "caller")
 
 	return params
 }
 
 // sortedParams returns param names in a stable order.
 func sortedParams(params map[string]string) []string {
-	order := []string{"caller", "from", "to", "owner", "spender", "operator", "receiver", "beneficiary", "id", "tokenId", "amount", "assets", "shares", "total", "claimAmount"}
+	order := []string{"caller", "from", "to", "owner", "spender", "operator", "receiver", "beneficiary", "id", "tokenId", "nullifier", "choice", "pollId", "commitment", "weight", "amount", "assets", "shares", "total", "claimAmount"}
 	var result []string
 	seen := make(map[string]bool)
 

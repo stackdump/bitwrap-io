@@ -185,6 +185,40 @@ export function buildTransferFromWitness({
   return { circuit: 'transferFrom', witness };
 }
 
+// Build a voteCast witness
+// tree: MerkleTree with voter commitments (mimcHash(voterSecret, voterWeight) as leaves)
+// voterIdx: index of voter's leaf in tree
+// pollId: unique poll identifier (BigInt)
+// voterSecret: voter's secret derived from wallet signature (BigInt)
+// voteChoice: the choice index (BigInt, 0-255)
+// voterWeight: voter's weight in the registry (BigInt)
+export function buildVoteCastWitness({ tree, voterIdx, pollId, voterSecret, voteChoice, voterWeight }) {
+  pollId = BigInt(pollId);
+  voterSecret = BigInt(voterSecret);
+  voteChoice = BigInt(voteChoice);
+  voterWeight = BigInt(voterWeight);
+
+  // Voter registry root from Merkle tree
+  const voterRegistryRoot = tree.root;
+  const proof = tree.getProof(voterIdx);
+
+  // Nullifier: deterministic per voter per poll, unlinkable across polls
+  const nullifier = mimcHash(voterSecret, pollId);
+
+  return {
+    circuit: 'voteCast',
+    witness: {
+      pollId: fieldStr(pollId),
+      voterRegistryRoot: fieldStr(voterRegistryRoot),
+      nullifier: fieldStr(nullifier),
+      voterSecret: fieldStr(voterSecret),
+      voteChoice: fieldStr(voteChoice),
+      voterWeight: fieldStr(voterWeight),
+      ...flattenProof(proof, 20),
+    }
+  };
+}
+
 // Build a vesting claim witness
 export function buildVestClaimWitness({
   scheduleTree, ownerTree, tokenID, caller, claimAmount,

@@ -13,8 +13,9 @@ type GenesisAction struct {
 
 // GenesisConfig holds the configuration for genesis block initialization.
 type GenesisConfig struct {
-	Actions     []GenesisAction `json:"actions"`
-	TotalEpochs int             `json:"totalEpochs,omitempty"`
+	Actions         []GenesisAction `json:"actions"`
+	TotalEpochs     int             `json:"totalEpochs,omitempty"`
+	ConstructorArgs string          `json:"constructorArgs,omitempty"` // extra constructor args (e.g., "0" for voterRegistryRoot)
 }
 
 // GenerateGenesis produces a Foundry script that executes genesis actions.
@@ -80,7 +81,11 @@ func (g *genesisGenerator) generate() string {
 	b.WriteString("        vm.startBroadcast(deployerPrivateKey);\n\n")
 
 	// Deploy contract
-	b.WriteString(fmt.Sprintf("        %s token = new %s();\n", g.contractName, g.contractName))
+	if g.config.ConstructorArgs != "" {
+		b.WriteString(fmt.Sprintf("        %s token = new %s(%s);\n", g.contractName, g.contractName, g.config.ConstructorArgs))
+	} else {
+		b.WriteString(fmt.Sprintf("        %s token = new %s();\n", g.contractName, g.contractName))
+	}
 	b.WriteString(fmt.Sprintf("        console.log(\"%s deployed at:\", address(token));\n\n", g.contractName))
 
 	// Execute genesis actions

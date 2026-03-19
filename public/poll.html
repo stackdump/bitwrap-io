@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1" name="viewport"/>
+    <title>ZK Poll - bitwrap</title>
+    <meta name="description" content="Create and participate in anonymous ZK polls. Voter eligibility proven via wallet signatures, votes verified by Groth16 proofs."/>
+    <link href="bitwrap.css" rel="stylesheet"/>
+    <style>
+        .poll-app { max-width: 720px; margin: 0 auto; padding: 100px 24px 48px; }
+        .poll-header { text-align: center; margin-bottom: 48px; }
+        .poll-header h1 { font-size: 2rem; margin-bottom: 8px; }
+        .poll-header p { color: var(--text-muted); }
+
+        /* Create form */
+        .poll-form { display: none; }
+        .poll-form.active { display: block; }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 6px; }
+        .form-group input, .form-group textarea, .form-group select {
+            width: 100%; padding: 10px 14px; background: var(--bg-card); border: 1px solid var(--border);
+            border-radius: var(--radius); color: var(--text); font-family: var(--font); font-size: 0.95rem;
+        }
+        .form-group input:focus, .form-group textarea:focus { outline: none; border-color: var(--accent); }
+        .form-group textarea { resize: vertical; min-height: 80px; }
+
+        .choices-list { display: flex; flex-direction: column; gap: 8px; }
+        .choice-row { display: flex; gap: 8px; align-items: center; }
+        .choice-row input { flex: 1; }
+        .btn-remove { background: none; border: 1px solid var(--border); color: var(--text-muted); border-radius: var(--radius);
+            padding: 8px 12px; cursor: pointer; font-size: 0.85rem; }
+        .btn-remove:hover { border-color: #ff4444; color: #ff4444; }
+        .btn-add { background: var(--accent-dim); border: 1px solid var(--accent); color: var(--accent); border-radius: var(--radius);
+            padding: 8px 16px; cursor: pointer; font-size: 0.85rem; margin-top: 8px; }
+        .btn-add:hover { background: rgba(0,255,163,0.2); }
+
+        /* Vote view */
+        .poll-vote { display: none; }
+        .poll-vote.active { display: block; }
+        .poll-title { font-size: 1.5rem; margin-bottom: 4px; }
+        .poll-meta { color: var(--text-muted); font-size: 0.85rem; margin-bottom: 24px; }
+        .poll-status { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
+        .poll-status.active { background: rgba(0,255,163,0.15); color: var(--accent); }
+        .poll-status.closed { background: rgba(255,68,68,0.15); color: #ff4444; }
+
+        .choice-option { display: block; padding: 14px 18px; margin-bottom: 8px; background: var(--bg-card);
+            border: 2px solid var(--border); border-radius: var(--radius); cursor: pointer; transition: border-color 0.2s; }
+        .choice-option:hover { border-color: var(--accent); }
+        .choice-option.selected { border-color: var(--accent); background: var(--accent-dim); }
+        .choice-option input { display: none; }
+        .choice-label { font-size: 1rem; }
+
+        /* Results */
+        .poll-results { display: none; }
+        .poll-results.active { display: block; }
+        .result-bar { margin-bottom: 12px; }
+        .result-label { display: flex; justify-content: space-between; font-size: 0.9rem; margin-bottom: 4px; }
+        .result-track { height: 24px; background: var(--bg-card); border-radius: var(--radius); overflow: hidden; }
+        .result-fill { height: 100%; background: var(--accent); border-radius: var(--radius); transition: width 0.5s ease; min-width: 2px; }
+        .result-total { text-align: center; color: var(--text-muted); margin-top: 16px; font-size: 0.85rem; }
+
+        /* Shared */
+        .btn-primary { display: inline-block; padding: 12px 32px; background: var(--accent); color: var(--bg);
+            border: none; border-radius: var(--radius); font-size: 1rem; font-weight: 600; cursor: pointer;
+            text-decoration: none; transition: background 0.2s; }
+        .btn-primary:hover { background: var(--accent-hover); }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-secondary { display: inline-block; padding: 12px 32px; background: transparent; color: var(--accent);
+            border: 1px solid var(--accent); border-radius: var(--radius); font-size: 1rem; cursor: pointer;
+            text-decoration: none; transition: background 0.2s; margin-left: 12px; }
+        .btn-secondary:hover { background: var(--accent-dim); }
+
+        .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; margin-bottom: 24px; }
+        .msg { padding: 12px 16px; border-radius: var(--radius); margin-bottom: 16px; font-size: 0.9rem; }
+        .msg-success { background: rgba(0,255,163,0.1); border: 1px solid var(--accent); color: var(--accent); }
+        .msg-error { background: rgba(255,68,68,0.1); border: 1px solid #ff4444; color: #ff4444; }
+        .msg-info { background: rgba(100,149,237,0.1); border: 1px solid #6495ed; color: #6495ed; }
+
+        .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border);
+            border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; margin-right: 8px; vertical-align: middle; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .poll-link { word-break: break-all; background: var(--bg); padding: 10px 14px; border-radius: var(--radius);
+            border: 1px solid var(--border); font-family: var(--mono); font-size: 0.85rem; user-select: all; }
+
+        .section-divider { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+
+        /* Poll list */
+        .poll-list { display: none; }
+        .poll-list.active { display: block; }
+        .poll-list-item { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px;
+            background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px;
+            text-decoration: none; color: var(--text); transition: border-color 0.2s; }
+        .poll-list-item:hover { border-color: var(--accent); }
+        .poll-list-title { font-weight: 600; }
+        .poll-list-meta { font-size: 0.8rem; color: var(--text-muted); }
+
+        .view-model-link { display: inline-block; margin-top: 16px; color: var(--accent); text-decoration: none; font-size: 0.85rem; }
+        .view-model-link:hover { text-decoration: underline; }
+
+        /* Deploy section */
+        .deploy-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; margin-bottom: 24px; }
+        .deploy-card h3 { margin-top: 0; }
+        .deploy-options { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
+        .deploy-option { padding: 16px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+            cursor: pointer; transition: border-color 0.2s; text-align: center; }
+        .deploy-option:hover { border-color: var(--accent); }
+        .deploy-option h4 { margin: 0 0 6px; font-size: 0.95rem; }
+        .deploy-option p { margin: 0; font-size: 0.8rem; color: var(--text-muted); }
+        .deploy-option .icon { font-size: 1.5rem; margin-bottom: 8px; display: block; }
+
+        /* Deploy standalone view */
+        .poll-deploy { display: none; }
+        .poll-deploy.active { display: block; }
+        .code-preview { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+            padding: 16px; font-family: var(--mono); font-size: 0.8rem; color: var(--text-muted);
+            max-height: 300px; overflow-y: auto; white-space: pre-wrap; margin: 16px 0; }
+        @media (max-width: 500px) { .deploy-options { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+
+<nav class="nav">
+    <a href="/" class="nav-brand">bitwrap</a>
+    <div class="nav-links">
+        <a href="/editor">Editor</a>
+        <a href="/poll">Polls</a>
+        <a href="https://book.pflow.xyz">Docs</a>
+    </div>
+</nav>
+
+<div class="poll-app">
+    <div class="poll-header">
+        <h1>ZK Polls</h1>
+        <p>Anonymous voting with zero-knowledge proofs. Create a poll, share the link, voters prove eligibility without revealing identity.</p>
+    </div>
+
+    <div id="messages"></div>
+
+    <!-- Poll list (default view) -->
+    <div id="poll-list" class="poll-list active">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:24px;">
+            <h2 style="margin:0;">Active Polls</h2>
+            <div style="display:flex; gap:8px;">
+                <button class="btn-primary" onclick="showCreate()">Create Poll</button>
+                <button class="btn-secondary" onclick="showDeploy()" style="margin-left:0;">Deploy On-Chain</button>
+            </div>
+        </div>
+        <div id="polls-container">
+            <p style="color:var(--text-muted);">Loading...</p>
+        </div>
+    </div>
+
+    <!-- Create poll form -->
+    <div id="poll-create" class="poll-form">
+        <div class="card">
+            <h2 style="margin-top:0;">Create a New Poll</h2>
+            <div class="form-group">
+                <label>Title</label>
+                <input type="text" id="poll-title" placeholder="What should we decide?"/>
+            </div>
+            <div class="form-group">
+                <label>Description (optional)</label>
+                <textarea id="poll-desc" placeholder="Additional context for voters..."></textarea>
+            </div>
+            <div class="form-group">
+                <label>Choices</label>
+                <div class="choices-list" id="choices-list">
+                    <div class="choice-row"><input type="text" placeholder="Option 1" class="choice-input"/><button class="btn-remove" onclick="removeChoice(this)">-</button></div>
+                    <div class="choice-row"><input type="text" placeholder="Option 2" class="choice-input"/><button class="btn-remove" onclick="removeChoice(this)">-</button></div>
+                </div>
+                <button class="btn-add" onclick="addChoice()">+ Add choice</button>
+            </div>
+            <div class="form-group">
+                <label>Duration</label>
+                <select id="poll-duration">
+                    <option value="60">1 hour</option>
+                    <option value="1440" selected>1 day</option>
+                    <option value="10080">1 week</option>
+                    <option value="0">No expiration</option>
+                </select>
+            </div>
+            <div style="display:flex; gap:12px; margin-top:24px;">
+                <button class="btn-primary" id="btn-create" onclick="createPoll()">Create Poll</button>
+                <button class="btn-secondary" onclick="showList()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Vote on poll -->
+    <div id="poll-view" class="poll-vote">
+        <div class="card">
+            <h2 class="poll-title" id="vote-title"></h2>
+            <div class="poll-meta">
+                <span class="poll-status" id="vote-status"></span>
+                <span id="vote-meta-text"></span>
+            </div>
+            <p id="vote-desc" style="color:var(--text-muted); margin-bottom:24px;"></p>
+
+            <div id="vote-choices"></div>
+
+            <div style="margin-top:24px; display:flex; gap:12px; align-items:center;">
+                <button class="btn-primary" id="btn-vote" onclick="castVote()">Cast Vote</button>
+                <button class="btn-secondary" onclick="showResults(currentPollId)">View Results</button>
+            </div>
+
+            <a class="view-model-link" href="/editor?template=vote">View Petri Net Model &rarr;</a>
+        </div>
+    </div>
+
+    <!-- Deploy on-chain view -->
+    <div id="poll-deploy" class="poll-deploy">
+        <div class="card">
+            <h2 style="margin-top:0;">Deploy ZK Poll On-Chain</h2>
+            <p style="color:var(--text-muted);">Generate a complete Foundry project with a Solidity governance contract, Groth16 verifier, tests, and deployment script.</p>
+
+            <div class="deploy-options">
+                <div class="deploy-option" onclick="downloadBundle()">
+                    <span class="icon">&#x1F4E6;</span>
+                    <h4>Foundry Bundle</h4>
+                    <p>ZIP with contract, verifier, tests, and deploy script</p>
+                </div>
+                <div class="deploy-option" onclick="downloadSolidity()">
+                    <span class="icon">&#x1F4C4;</span>
+                    <h4>Solidity Only</h4>
+                    <p>Just the governance contract .sol file</p>
+                </div>
+            </div>
+
+            <hr class="section-divider"/>
+            <h3>What you get</h3>
+            <div style="font-size:0.85rem; color:var(--text-muted); line-height:1.8;">
+                <div><strong style="color:var(--text);">src/BitwrapZKPoll.sol</strong> &mdash; Governance contract with nullifier-based double-vote prevention, voter registry Merkle root, poll lifecycle (create/vote/close)</div>
+                <div><strong style="color:var(--text);">src/Verifier.sol</strong> &mdash; Auto-generated Groth16 verifier for the voteCast circuit</div>
+                <div><strong style="color:var(--text);">test/BitwrapZKPoll.t.sol</strong> &mdash; Foundry tests for all poll actions</div>
+                <div><strong style="color:var(--text);">script/Deploy.s.sol</strong> &mdash; Deployment script</div>
+            </div>
+
+            <div id="deploy-preview"></div>
+
+            <div style="margin-top:24px;">
+                <button class="btn-secondary" onclick="showList()" style="margin-left:0;">Back</button>
+                <a class="view-model-link" href="/editor?template=vote">View Petri Net Model &rarr;</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Results view -->
+    <div id="poll-results" class="poll-results">
+        <div class="card">
+            <h2 style="margin-top:0;" id="results-title"></h2>
+            <div id="results-bars"></div>
+            <div class="result-total" id="results-total"></div>
+
+            <hr class="section-divider"/>
+            <h3>Nullifiers (public audit log)</h3>
+            <div id="results-nullifiers" style="font-family:var(--mono); font-size:0.75rem; color:var(--text-muted); max-height:200px; overflow-y:auto;"></div>
+
+            <div style="margin-top:24px;">
+                <button class="btn-secondary" onclick="location.hash=currentPollId" style="margin-left:0;">Back to Poll</button>
+                <a class="view-model-link" href="/editor?template=vote">View Petri Net Model &rarr;</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script type="module" src="poll.js"></script>
+</body>
+</html>

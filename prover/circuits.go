@@ -286,6 +286,50 @@ func (c *VestingClaimCircuit) Define(api frontend.API) error {
 	return nil
 }
 
+// VoteCastCircuit proves: "I am an eligible voter and my vote is valid" without revealing identity or choice.
+// Public inputs: pollId, voterRegistryRoot, nullifier
+// Private inputs: voterSecret, voteChoice, voterWeight, voterIdx, pathElements[20], pathIndices[20]
+type VoteCastCircuit struct {
+	// Public inputs
+	PollID             frontend.Variable `gnark:",public"`
+	VoterRegistryRoot  frontend.Variable `gnark:",public"`
+	Nullifier          frontend.Variable `gnark:",public"`
+
+	// Private inputs
+	VoterSecret  frontend.Variable
+	VoteChoice   frontend.Variable
+	VoterWeight  frontend.Variable
+
+	// Merkle proof for voter commitment (20 levels)
+	PathElements [20]frontend.Variable
+	PathIndices  [20]frontend.Variable
+}
+
+func (c *VoteCastCircuit) Define(api frontend.API) error {
+	// 1. Commitment: leaf = mimcHash(voterSecret, voterWeight)
+	leaf := mimcHash(api, c.VoterSecret, c.VoterWeight)
+
+	// 2. Merkle proof: walk path up to root, assert root == voterRegistryRoot
+	current := leaf
+	for i := 0; i < 20; i++ {
+		api.AssertIsBoolean(c.PathIndices[i])
+		left := api.Select(c.PathIndices[i], c.PathElements[i], current)
+		right := api.Select(c.PathIndices[i], current, c.PathElements[i])
+		current = mimcHash(api, left, right)
+	}
+	api.AssertIsEqual(current, c.VoterRegistryRoot)
+
+	// 3. Nullifier binding: nullifier == mimcHash(voterSecret, pollId)
+	// Deterministic per voter per poll, unlinkable across polls
+	expectedNullifier := mimcHash(api, c.VoterSecret, c.PollID)
+	api.AssertIsEqual(c.Nullifier, expectedNullifier)
+
+	// 4. Vote range: proves choice fits in 8 bits (up to 256 options)
+	api.ToBinary(c.VoteChoice, 8)
+
+	return nil
+}
+
 // RegisterStandardCircuits registers all standard ERC-20 circuits with the prover.
 // Circuits are compiled in parallel for faster startup.
 func RegisterStandardCircuits(p *Prover) error {
@@ -296,6 +340,7 @@ func RegisterStandardCircuits(p *Prover) error {
 		"burn":         &BurnCircuit{},
 		"approve":      &ApproveCircuit{},
 		"vestClaim":    &VestingClaimCircuit{},
+		"voteCast":     &VoteCastCircuit{},
 	}
 
 	return RegisterCircuitsParallel(p, circuits)

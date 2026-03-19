@@ -30,16 +30,17 @@ type Options struct {
 
 // Server is the bitwrap HTTP server.
 type Server struct {
-	store      *store.FSStore
-	publicFS   fs.FS
-	opts       Options
-	proverSvc  *prover.Service
-	keyStore   *prover.KeyStore
+	store          *store.FSStore
+	publicFS       fs.FS
+	opts           Options
+	proverSvc      *prover.Service
+	keyStore       *prover.KeyStore
+	pollRateLimiter *RateLimiter
 }
 
 // New creates a new server.
 func New(s *store.FSStore, publicFS fs.FS, opts Options) *Server {
-	srv := &Server{store: s, publicFS: publicFS, opts: opts}
+	srv := &Server{store: s, publicFS: publicFS, opts: opts, pollRateLimiter: NewRateLimiter(5, time.Hour)}
 	if opts.EnableProver {
 		log.Printf("Initializing ZK prover (compiling circuits)...")
 		start := time.Now()
@@ -112,6 +113,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/api/compile" && r.Method == http.MethodPost:
 		s.handleCompile(w, r)
 
+	// Poll routes
+	case r.URL.Path == "/api/polls" && r.Method == http.MethodPost:
+		s.handleCreatePoll(w, r)
+	case r.URL.Path == "/api/polls" && r.Method == http.MethodGet:
+		s.handleListPolls(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/polls/") && strings.HasSuffix(r.URL.Path, "/vote") && r.Method == http.MethodPost:
+		s.handleCastVote(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/polls/") && strings.HasSuffix(r.URL.Path, "/results"):
+		s.handlePollResults(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/polls/") && strings.HasSuffix(r.URL.Path, "/nullifiers"):
+		s.handlePollNullifiers(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/polls/"):
+		s.handleGetPoll(w, r)
+
 	// Object routes
 	case strings.HasPrefix(r.URL.Path, "/o/"):
 		s.handleGetObject(w, r)
@@ -142,6 +157,9 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	}
 	if path == "/remix" {
 		path = "/remix-plugin.html"
+	}
+	if path == "/poll" {
+		path = "/poll.html"
 	}
 
 	// Serve the file
@@ -296,6 +314,7 @@ var templates = []Template{
 	{ID: "erc1155", Name: "ERC-1155 Multi Token", Standard: "ERC-1155", Description: "Multi-token standard supporting both fungible and non-fungible"},
 	{ID: "erc4626", Name: "ERC-4626 Tokenized Vault", Standard: "ERC-4626", Description: "Tokenized vault with deposit, withdraw, and yield"},
 	{ID: "erc5725", Name: "ERC-5725 Transferable Vesting NFT", Standard: "ERC-5725", Description: "Transferable vesting NFT with create, claim, transfer, revoke, burn"},
+	{ID: "vote", Name: "ZK Poll", Standard: "Vote", Description: "Private voting with ZK proofs — anonymous ballots, verifiable tallies"},
 }
 
 // handleTemplates lists available ERC templates.
@@ -344,6 +363,7 @@ func (s *Server) handleSolGen(w http.ResponseWriter, r *http.Request) {
 		"erc1155": "BitwrapERC1155.sol",
 		"erc4626": "BitwrapERC4626.sol",
 		"erc5725": "BitwrapERC5725.sol",
+		"vote":   "BitwrapZKPoll.sol",
 	}
 
 	resp := solgenResponse{
@@ -470,6 +490,8 @@ func (s *Server) getTemplate(id string) erc.Template {
 		return erc.NewERC04626("ERC4626", "VLT")
 	case "erc5725":
 		return erc.NewERC05725("ERC5725", "VEST", "0x0000000000000000000000000000000000000000")
+	case "vote":
+		return erc.NewVote("ZKPoll")
 	default:
 		return nil
 	}
@@ -500,7 +522,7 @@ func (s *Server) handleProve(w http.ResponseWriter, r *http.Request) {
 	// If prover is not initialized, return error
 	if s.proverSvc == nil {
 		// Validate circuit name against known list for a helpful error
-		knownCircuits := []string{"transfer", "transferFrom", "mint", "burn", "approve", "vestClaim"}
+		knownCircuits := []string{"transfer", "transferFrom", "mint", "burn", "approve", "vestClaim", "voteCast"}
 		found := false
 		for _, c := range knownCircuits {
 			if c == req.Circuit {
@@ -573,6 +595,7 @@ var circuitDescriptions = map[string]struct {
 	"burn":         {"ERC-20 burn: proves balance >= amount", []string{"preStateRoot", "postStateRoot", "from", "amount"}},
 	"approve":      {"ERC-20 approve: proves owner == caller", []string{"preStateRoot", "postStateRoot", "caller", "spender", "amount"}},
 	"vestClaim":    {"Vesting claim: proves ownership and available amount", []string{"preStateRoot", "postStateRoot", "tokenID", "caller", "claimAmount"}},
+	"voteCast":     {"ZK vote: proves voter eligibility and valid choice without revealing identity", []string{"pollId", "voterRegistryRoot", "nullifier"}},
 }
 
 // handleCircuits lists available ZK circuits.
@@ -699,6 +722,7 @@ func (s *Server) handleBundle(w http.ResponseWriter, r *http.Request) {
 		"erc1155": "BitwrapERC1155",
 		"erc4626": "BitwrapERC4626",
 		"erc5725": "BitwrapERC5725",
+		"vote":    "BitwrapZKPoll",
 	}
 
 	contractName := contractNames[templateID]
@@ -709,7 +733,12 @@ func (s *Server) handleBundle(w http.ResponseWriter, r *http.Request) {
 	schema := tmpl.Schema()
 	contractCode := solidity.Generate(schema)
 	testCode := solidity.GenerateTests(schema)
-	deployCode := solidity.GenerateGenesis(schema.Name, solidity.GenesisConfig{}, solidity.DefaultAddresses())
+
+	genesisConfig := solidity.GenesisConfig{}
+	if strings.HasPrefix(schema.Version, "Vote:") {
+		genesisConfig.ConstructorArgs = "0 /* voterRegistryRoot */, address(0) /* verifier — deploy Verifier.sol first */"
+	}
+	deployCode := solidity.GenerateGenesis(schema.Name, genesisConfig, solidity.DefaultAddresses())
 
 	foundryToml := `[profile.default]
 src = "src"
@@ -751,19 +780,27 @@ forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:8545 --broadcast --p
 	zw := zip.NewWriter(w)
 	defer zw.Close()
 
+	// Use the schema-derived name for the .sol file (matches import paths in tests/deploy)
+	solContractName := solidity.ContractName(schema.Name)
 	files := map[string]string{
-		"foundry.toml":                                   foundryToml,
-		fmt.Sprintf("src/%s.sol", contractName):          contractCode,
-		fmt.Sprintf("test/%s.t.sol", contractName):       testCode,
-		"script/Deploy.s.sol":                            deployCode,
-		"README.md":                                      readme,
+		"foundry.toml":                                        foundryToml,
+		fmt.Sprintf("src/%s.sol", solContractName):            contractCode,
+		fmt.Sprintf("test/%s.t.sol", solContractName):         testCode,
+		"script/Deploy.s.sol":                                 deployCode,
+		"README.md":                                           readme,
 	}
 
-	// Add Solidity verifier if keystore has a "transfer" circuit
-	if s.keyStore != nil && s.keyStore.Has("transfer") {
-		verifierSol, err := s.keyStore.ExportSolidityVerifier("transfer")
-		if err == nil {
-			files["src/Verifier.sol"] = string(verifierSol)
+	// Add Solidity verifier: use voteCast circuit for vote template, transfer for others
+	if s.keyStore != nil {
+		verifierCircuit := "transfer"
+		if templateID == "vote" {
+			verifierCircuit = "voteCast"
+		}
+		if s.keyStore.Has(verifierCircuit) {
+			verifierSol, err := s.keyStore.ExportSolidityVerifier(verifierCircuit)
+			if err == nil {
+				files["src/Verifier.sol"] = string(verifierSol)
+			}
 		}
 	}
 

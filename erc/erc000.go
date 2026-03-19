@@ -17,6 +17,7 @@ const (
 	StandardERC04626 Standard = "ERC-04626"
 	StandardERC05725 Standard = "ERC-05725"
 	StandardBridge   Standard = "Bridge"
+	StandardVote     Standard = "Vote"
 )
 
 // TokenMetadata holds common token metadata.
