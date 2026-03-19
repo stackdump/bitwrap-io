@@ -26,14 +26,14 @@ type Poll struct {
 }
 
 // VoteRecord stores a verified vote submission.
+// Note: individual vote choices are NEVER stored — only the blinded commitment.
+// Tallying is done via aggregate counters that can't be linked back to individual voters.
 type VoteRecord struct {
 	Nullifier      string    `json:"nullifier"`
-	VoteCommitment string    `json:"voteCommitment"`       // mimcHash(voterSecret, voteChoice) — blinded, can't reverse
+	VoteCommitment string    `json:"voteCommitment"` // mimcHash(voterSecret, voteChoice) — blinded, can't reverse
 	Proof          string    `json:"proof"`
 	Timestamp      time.Time `json:"timestamp"`
-	// RevealedChoice is set after the voter reveals their choice post-close
-	RevealedChoice int       `json:"revealedChoice,omitempty"`
-	Revealed       bool      `json:"revealed,omitempty"`
+	Revealed       bool      `json:"revealed,omitempty"` // true after voter revealed (choice NOT stored here)
 }
 
 // PollResults holds tallied results for a poll.
@@ -226,7 +226,9 @@ func (s *FSStore) ListPolls() ([]Poll, error) {
 	return polls, nil
 }
 
-// RevealVote updates a vote record with the revealed choice.
+// RevealVote marks a vote as revealed and increments the aggregate tally.
+// The choice is verified against the commitment but NEVER stored per-vote —
+// only the aggregate counter is updated, preserving individual ballot secrecy.
 func (s *FSStore) RevealVote(pollID string, nullifier string, choice int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -241,6 +243,7 @@ func (s *FSStore) RevealVote(pollID string, nullifier string, choice int) error 
 		return fmt.Errorf("invalid nullifier: %w", err)
 	}
 
+	// Mark vote as revealed (without recording which choice)
 	votePath := filepath.Join(dir, cleanNull+".json")
 	data, err := os.ReadFile(votePath)
 	if err != nil {
@@ -256,32 +259,83 @@ func (s *FSStore) RevealVote(pollID string, nullifier string, choice int) error 
 		return fmt.Errorf("vote already revealed")
 	}
 
-	vote.RevealedChoice = choice
 	vote.Revealed = true
-
 	out, err := json.MarshalIndent(vote, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(votePath, out, 0o644)
+	if err := os.WriteFile(votePath, out, 0o644); err != nil {
+		return err
+	}
+
+	// Increment aggregate tally — choice is only recorded here as a count
+	return s.incrementTally(pollID, choice)
 }
 
-// TallyRevealed counts revealed votes by choice.
-func (s *FSStore) TallyRevealed(pollID string) (map[int]int, int, error) {
-	votes, err := s.ListVotes(pollID)
+// AggregateTally holds per-choice vote counts with no link to individual voters.
+type AggregateTally struct {
+	Counts        map[string]int `json:"counts"`        // choice index (as string) → count
+	RevealedTotal int            `json:"revealedTotal"`
+}
+
+func (s *FSStore) tallyPath(pollID string) (string, error) {
+	clean, err := sanitizePathComponent(pollID)
 	if err != nil {
-		return nil, 0, err
+		return "", err
+	}
+	return filepath.Join(s.pollDir(), clean, "tally.json"), nil
+}
+
+func (s *FSStore) incrementTally(pollID string, choice int) error {
+	path, err := s.tallyPath(pollID)
+	if err != nil {
+		return err
 	}
 
-	tally := make(map[int]int)
-	revealed := 0
-	for _, v := range votes {
-		if v.Revealed {
-			tally[v.RevealedChoice]++
-			revealed++
-		}
+	// Ensure directory exists
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
 	}
-	return tally, revealed, nil
+
+	var tally AggregateTally
+	if data, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(data, &tally)
+	}
+	if tally.Counts == nil {
+		tally.Counts = make(map[string]int)
+	}
+
+	key := fmt.Sprintf("%d", choice)
+	tally.Counts[key]++
+	tally.RevealedTotal++
+
+	out, err := json.MarshalIndent(tally, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, out, 0o644)
+}
+
+// ReadTally returns the aggregate tally for a poll.
+func (s *FSStore) ReadTally(pollID string) (*AggregateTally, error) {
+	path, err := s.tallyPath(pollID)
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &AggregateTally{Counts: make(map[string]int)}, nil
+		}
+		return nil, err
+	}
+
+	var tally AggregateTally
+	if err := json.Unmarshal(data, &tally); err != nil {
+		return nil, err
+	}
+	return &tally, nil
 }
 
 func isJSONFile(name string) bool {

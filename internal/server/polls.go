@@ -424,15 +424,15 @@ func (s *Server) handlePollResults(w http.ResponseWriter, r *http.Request) {
 		"status":      poll.Status,
 	}
 
-	// Include tallies only from revealed votes
-	tally, revealedCount, _ := s.store.TallyRevealed(pollID)
-	if revealedCount > 0 {
+	// Include aggregate tallies (no individual voter linkage)
+	tally, err := s.store.ReadTally(pollID)
+	if err == nil && tally.RevealedTotal > 0 {
 		choiceTallies := make([]int, len(poll.Choices))
 		for i := range choiceTallies {
-			choiceTallies[i] = tally[i]
+			choiceTallies[i] = tally.Counts[fmt.Sprintf("%d", i)]
 		}
 		result["tallies"] = choiceTallies
-		result["revealedCount"] = revealedCount
+		result["revealedCount"] = tally.RevealedTotal
 	}
 
 	w.Header().Set("Content-Type", "application/json")
