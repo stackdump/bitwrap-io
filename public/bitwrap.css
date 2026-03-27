@@ -327,6 +327,15 @@ body {
     font-weight: 600;
 }
 
+.angle-card code {
+    font-family: var(--mono);
+    font-size: 0.85em;
+    color: var(--accent);
+    background: var(--accent-dim);
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+
 /* Footer */
 .footer {
     border-top: 1px solid var(--border);
@@ -361,6 +370,103 @@ body {
     color: #555;
     font-size: 0.8rem;
 }
+
+/* Demo poll widget */
+.demo-poll {
+    max-width: 600px;
+    margin: 0 auto;
+}
+
+.demo-poll-loading {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 40px;
+}
+
+.demo-poll-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px;
+}
+
+.demo-poll-card h3 {
+    font-size: 1.15rem;
+    font-weight: 600;
+    margin: 0 0 4px;
+}
+
+.demo-poll-meta {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-bottom: 20px;
+}
+
+.demo-poll-choice {
+    display: block;
+    width: 100%;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 12px 16px;
+    font-size: 0.95rem;
+    font-family: var(--font);
+    cursor: pointer;
+    margin-bottom: 8px;
+    text-align: left;
+    transition: border-color 0.2s, background 0.2s;
+}
+
+.demo-poll-choice:hover {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+}
+
+.demo-poll-status {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--accent);
+    background: var(--accent-dim);
+    padding: 3px 8px;
+    border-radius: 4px;
+    display: inline-block;
+    margin-left: 8px;
+    vertical-align: middle;
+}
+
+.demo-poll-empty {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 32px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+
+.demo-poll-empty a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+/* Deploy code block */
+.deploy-code {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    line-height: 1.7;
+    color: var(--text);
+    margin: 12px 0 0;
+    overflow-x: auto;
+    white-space: pre;
+}
+
+.deploy-code .comment { color: #555; }
+.deploy-code .flag { color: #888; }
+.deploy-code .string { color: var(--accent); }
 
 /* Editor toolbar */
 .editor-toolbar {

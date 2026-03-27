@@ -104,12 +104,27 @@
         </div>
     </section>
 
+    <section class="section" id="try-it">
+        <h2>Try It Live</h2>
+        <p class="section-sub">Cast a vote on an active poll. Your choice stays hidden until the poll closes.</p>
+        <div id="demo-poll" class="demo-poll">
+            <div class="demo-poll-loading">Loading active polls&hellip;</div>
+        </div>
+        <div style="text-align:center; margin-top: 24px;">
+            <a class="btn-secondary" href="/poll" style="font-size:0.9rem; padding:10px 24px;">View All Polls</a>
+        </div>
+    </section>
+
     <section class="section section-dark">
         <h2>Why ZK Voting?</h2>
-        <div class="grid-2">
+        <div class="grid-3">
             <div class="angle-card">
                 <h3>Voter Privacy</h3>
                 <p>Nullifiers link each ballot to a registered voter without revealing who voted for what. The proof confirms eligibility; the choice stays hidden.</p>
+            </div>
+            <div class="angle-card">
+                <h3>Wallet-Native Auth</h3>
+                <p>Connect MetaMask to create polls and derive voting secrets from wallet signatures. No accounts, no passwords &mdash; your key is your identity.</p>
             </div>
             <div class="angle-card">
                 <h3>Verifiable Results</h3>
@@ -118,9 +133,37 @@
         </div>
     </section>
 
-    <section class="section">
+    <section class="section" id="deploy">
+        <h2>Deploy to Your Chain</h2>
+        <p class="section-sub">Download a complete Foundry project. Deploy the ZK poll contract to any EVM chain in minutes.</p>
+        <div class="grid-2">
+            <div class="angle-card">
+                <h3>What You Get</h3>
+                <p><code>BitwrapZKPoll.sol</code> &mdash; governance contract with nullifier-based double-vote prevention and voter registry Merkle root verification.</p>
+                <p style="margin-top:12px;"><code>Verifier.sol</code> &mdash; auto-generated Groth16 verifier for the voteCast circuit. Deployed alongside the poll contract.</p>
+                <p style="margin-top:12px;"><code>Deploy.s.sol</code> &mdash; Foundry deployment script with sample initialization.</p>
+            </div>
+            <div class="angle-card">
+                <h3>Three Commands</h3>
+<pre class="deploy-code"><span class="comment"># Download the bundle</span>
+<span class="flag">curl</span> -o poll.zip https://api.bitwrap.io/api/bundle/vote
+
+<span class="comment"># Build &amp; test</span>
+<span class="flag">cd</span> BitwrapZKPoll && <span class="flag">forge</span> test
+
+<span class="comment"># Deploy</span>
+<span class="flag">forge</span> script script/Deploy.s.sol \
+  --rpc-url <span class="string">$RPC_URL</span> --broadcast</pre>
+            </div>
+        </div>
+        <div style="text-align:center; margin-top: 32px;">
+            <a class="btn-primary" href="/api/bundle/vote" style="font-size:0.9rem; padding:12px 28px;">Download Foundry Bundle</a>
+        </div>
+    </section>
+
+    <section class="section section-dark">
         <h2>Built on Petri Net Foundations</h2>
-        <p class="section-sub">The voting protocol is one application of a general-purpose ZK state machine. The same framework powers token standards.</p>
+        <p class="section-sub" style="max-width:900px; margin-left:auto; margin-right:auto;">The voting protocol is one application of a general-purpose ZK state machine. The same framework powers token standards.</p>
         <div class="grid-4" id="template-cards">
             <div class="template-card" data-template="vote">
                 <div class="template-badge">Vote</div>
@@ -159,5 +202,37 @@
     </footer>
 </div>
 
+<script>
+(function() {
+    const el = document.getElementById('demo-poll');
+    if (!el) return;
+
+    fetch('/api/polls')
+        .then(r => r.json())
+        .then(data => {
+            const polls = (data.polls || []).filter(p => p.status === 'active');
+            if (polls.length === 0) {
+                el.innerHTML = '<div class="demo-poll-empty">No active polls right now. <a href="/poll">Create one</a> to see it here.</div>';
+                return;
+            }
+            const poll = polls[0];
+            const choices = (poll.choices || []).map(c => {
+                const safe = c.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+                return '<button class="demo-poll-choice" onclick="location.href=\'/poll#' + poll.id + '\'">' + safe + '</button>';
+            }).join('');
+            const votes = poll.voteCount || 0;
+            el.innerHTML =
+                '<div class="demo-poll-card">' +
+                    '<h3>' + poll.title.replace(/&/g,'&amp;').replace(/</g,'&lt;') +
+                    '<span class="demo-poll-status">active</span></h3>' +
+                    '<div class="demo-poll-meta">' + votes + ' vote' + (votes !== 1 ? 's' : '') + ' cast &middot; results sealed</div>' +
+                    choices +
+                '</div>';
+        })
+        .catch(() => {
+            el.innerHTML = '<div class="demo-poll-empty">Could not load polls. <a href="/poll">Go to polls</a></div>';
+        });
+})();
+</script>
 </body>
 </html>
