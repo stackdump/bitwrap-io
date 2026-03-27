@@ -3,8 +3,8 @@
 <head>
     <meta charset="utf-8"/>
     <meta content="width=device-width, initial-scale=1" name="viewport"/>
-    <title>bitwrap - Petri Nets as ZK Containers</title>
-    <meta name="description" content="Model state machines as Petri nets, generate ZK proofs and Solidity contracts. Verifiable execution from visual models."/>
+    <title>bitwrap - Anonymous On-Chain Voting with ZK Proofs</title>
+    <meta name="description" content="Create verifiable anonymous polls backed by ZK proofs and Solidity contracts. Every vote produces a cryptographic proof — no one sees how you voted, everyone sees the result is correct."/>
     <link href="bitwrap.css" rel="stylesheet"/>
 </head>
 <body>
@@ -22,33 +22,31 @@
 
     <section class="hero">
         <div class="hero-content">
-            <h1>Petri Nets as ZK Containers</h1>
-            <p>Model state machines visually. Generate ZK proofs and Solidity contracts. Every transition firing produces a cryptographic proof of valid state change.</p>
+            <h1>Anonymous On-Chain Voting</h1>
+            <p>Create polls where every vote is backed by a ZK proof. No one sees how you voted. Everyone can verify the result is correct. Deploy to any EVM chain.</p>
             <div class="hero-buttons">
-                <a class="btn-primary" href="/editor">Open Editor</a>
+                <a class="btn-primary" href="/poll">Create a Poll</a>
                 <a class="btn-secondary" href="#how-it-works">How It Works</a>
             </div>
         </div>
     </section>
 
     <section class="section" id="how-it-works">
-        <h2>Model &rarr; Prove &rarr; Deploy</h2>
-        <p class="section-sub">One Petri net flows through the entire stack.</p>
+        <h2>Vote &rarr; Prove &rarr; Tally</h2>
+        <p class="section-sub">Voter privacy and result integrity in one protocol.</p>
         <div class="grid-3">
             <div class="card">
                 <div class="card-icon">
                     <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-                        <circle cx="14" cy="14" r="10" stroke="var(--accent)" stroke-width="2" fill="none"/>
-                        <circle cx="14" cy="14" r="3" fill="var(--accent)"/>
-                        <rect x="30" y="8" width="12" height="12" stroke="var(--accent)" stroke-width="2" fill="none"/>
-                        <line x1="24" y1="14" x2="30" y2="14" stroke="var(--accent)" stroke-width="2"/>
-                        <line x1="36" y1="20" x2="36" y2="28" stroke="var(--accent)" stroke-width="2"/>
-                        <circle cx="14" cy="38" r="10" stroke="var(--accent)" stroke-width="2" fill="none"/>
-                        <line x1="36" y1="28" x2="24" y2="38" stroke="var(--accent)" stroke-width="2"/>
+                        <rect x="12" y="4" width="24" height="32" rx="2" stroke="var(--accent)" stroke-width="2" fill="none"/>
+                        <line x1="18" y1="12" x2="30" y2="12" stroke="var(--accent)" stroke-width="2"/>
+                        <line x1="18" y1="18" x2="30" y2="18" stroke="var(--accent)" stroke-width="2"/>
+                        <line x1="18" y1="24" x2="30" y2="24" stroke="var(--accent)" stroke-width="2"/>
+                        <path d="M20 40L24 44L32 36" stroke="var(--accent)" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
                     </svg>
                 </div>
-                <h3>Model</h3>
-                <p>Draw places, transitions, and arcs in the visual editor. The model is a directed bipartite graph stored as JSON-LD with content-addressed identity.</p>
+                <h3>Vote</h3>
+                <p>Voters register with a commitment hash. When they cast a ballot, a nullifier prevents double-voting without revealing identity.</p>
             </div>
             <div class="card">
                 <div class="card-icon">
@@ -59,29 +57,49 @@
                     </svg>
                 </div>
                 <h3>Prove</h3>
-                <p>Guards become arithmetic constraints. Arc weights become balance checks. Invariants become circuit assertions. Groth16 proofs from net topology.</p>
+                <p>Each vote generates a Groth16 proof attesting the voter is registered and the ballot is valid &mdash; without revealing the choice.</p>
             </div>
             <div class="card">
                 <div class="card-icon">
                     <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-                        <rect x="4" y="6" width="40" height="30" rx="2" stroke="var(--accent)" stroke-width="2" fill="none"/>
-                        <line x1="10" y1="14" x2="22" y2="14" stroke="var(--accent)" stroke-width="2"/>
-                        <line x1="10" y1="20" x2="32" y2="20" stroke="var(--accent)" stroke-width="2"/>
-                        <line x1="10" y1="26" x2="28" y2="26" stroke="var(--accent)" stroke-width="2"/>
-                        <path d="M24 42L20 38H28L24 42Z" fill="var(--accent)"/>
-                        <line x1="24" y1="36" x2="24" y2="39" stroke="var(--accent)" stroke-width="2"/>
+                        <rect x="6" y="28" width="8" height="14" fill="var(--accent)" opacity="0.3"/>
+                        <rect x="6" y="28" width="8" height="14" stroke="var(--accent)" stroke-width="2" fill="none"/>
+                        <rect x="20" y="18" width="8" height="24" fill="var(--accent)" opacity="0.3"/>
+                        <rect x="20" y="18" width="8" height="24" stroke="var(--accent)" stroke-width="2" fill="none"/>
+                        <rect x="34" y="8" width="8" height="34" fill="var(--accent)" opacity="0.3"/>
+                        <rect x="34" y="8" width="8" height="34" stroke="var(--accent)" stroke-width="2" fill="none"/>
+                        <line x1="4" y1="42" x2="44" y2="42" stroke="var(--accent)" stroke-width="2"/>
                     </svg>
                 </div>
-                <h3>Deploy</h3>
-                <p>Generate Solidity contracts from ERC templates. Each token standard is a Petri net &mdash; the same model that produced the proof produces the contract.</p>
+                <h3>Tally</h3>
+                <p>Results aggregate on-chain in real time. The final tally is publicly verifiable &mdash; anyone can audit the proofs without accessing individual ballots.</p>
+            </div>
+        </div>
+    </section>
+
+    <section class="section section-dark">
+        <h2>Why ZK Voting?</h2>
+        <div class="grid-2">
+            <div class="angle-card">
+                <h3>Voter Privacy</h3>
+                <p>Nullifiers link each ballot to a registered voter without revealing who voted for what. The proof confirms eligibility; the choice stays hidden.</p>
+            </div>
+            <div class="angle-card">
+                <h3>Verifiable Results</h3>
+                <p>Every vote carries a Groth16 proof that the on-chain verifier checks. No trusted tallier, no back-room count &mdash; the math is the audit.</p>
             </div>
         </div>
     </section>
 
     <section class="section">
-        <h2>ZK Container Templates</h2>
-        <p class="section-sub">Start from a token standard. Customize the Petri net. Generate everything.</p>
+        <h2>Built on Petri Net Foundations</h2>
+        <p class="section-sub">The voting protocol is one application of a general-purpose ZK state machine. The same framework powers token standards.</p>
         <div class="grid-4" id="template-cards">
+            <div class="template-card" data-template="vote">
+                <div class="template-badge">Vote</div>
+                <h3>ZK Polls</h3>
+                <p>Register, cast, tally &mdash; anonymous voting with nullifier-based double-vote prevention and on-chain proof verification.</p>
+            </div>
             <div class="template-card" data-template="erc20">
                 <div class="template-badge">ERC-20</div>
                 <h3>Fungible Token</h3>
@@ -97,31 +115,13 @@
                 <h3>Multi Token</h3>
                 <p>Fungible and non-fungible in one contract. Batch operations, operator approvals.</p>
             </div>
-            <div class="template-card" data-template="erc4626">
-                <div class="template-badge">ERC-4626</div>
-                <h3>Tokenized Vault</h3>
-                <p>Deposit, withdraw, yield distribution &mdash; share accounting as token flow.</p>
-            </div>
-        </div>
-    </section>
-
-    <section class="section section-dark">
-        <h2>Two Angles, One Abstraction</h2>
-        <div class="grid-2">
-            <div class="angle-card">
-                <h3>Model &rarr; Proof</h3>
-                <p>Petri net structure maps directly to ZK circuit constraints. Guards become arithmetic checks, arc weights become balance checks, invariants become assertions. The model <em>is</em> the specification.</p>
-            </div>
-            <div class="angle-card">
-                <h3>Verifiable Execution</h3>
-                <p>Run a Petri net state machine where each transition firing produces a Groth16 proof. The proof attests that the state change was valid without revealing the full state. The model becomes its own audit trail.</p>
-            </div>
         </div>
     </section>
 
     <footer class="footer">
         <div class="footer-content">
             <div class="footer-links">
+                <a href="/poll">Polls</a>
                 <a href="/editor">Editor</a>
                 <a href="https://book.pflow.xyz">Documentation</a>
                 <a href="https://github.com/stackdump/bitwrap-io">GitHub</a>
