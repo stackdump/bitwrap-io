@@ -65,13 +65,45 @@ body {
 
 /* Hero */
 .hero {
-    min-height: 80vh;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 120px 32px 80px;
+    padding: 120px 32px 64px;
     background: radial-gradient(ellipse at 50% 30%, rgba(0,255,163,0.05) 0%, transparent 70%);
 }
+
+/* Quick-start code block */
+.quickstart {
+    max-width: 720px;
+    margin: 0 auto;
+    text-align: left;
+}
+
+.quickstart-label {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.quickstart pre {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    line-height: 1.7;
+    color: var(--text);
+    margin: 0;
+}
+
+.quickstart pre .comment { color: #555; }
+.quickstart pre .string { color: var(--accent); }
+.quickstart pre .flag { color: #888; }
 
 .hero-content {
     text-align: center;

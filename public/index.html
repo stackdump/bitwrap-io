@@ -26,8 +26,35 @@
             <p>Create polls where every vote is backed by a ZK proof. No one sees how you voted. Everyone can verify the result is correct. Deploy to any EVM chain.</p>
             <div class="hero-buttons">
                 <a class="btn-primary" href="/poll">Create a Poll</a>
-                <a class="btn-secondary" href="#how-it-works">How It Works</a>
+                <a class="btn-secondary" href="#quick-start">Quick Start</a>
             </div>
+        </div>
+    </section>
+
+    <section class="section" id="quick-start">
+        <h2>Quick Start</h2>
+        <p class="section-sub">Three API calls. Create a poll, cast a ZK-proven vote, read the results.</p>
+        <div class="quickstart">
+            <div class="quickstart-label">Create a poll</div>
+            <pre><span class="flag">curl</span> <span class="flag">-X POST</span> https://api.bitwrap.io/api/polls <span class="flag">\
+  -H</span> <span class="string">"Content-Type: application/json"</span> <span class="flag">\
+  -d</span> <span class="string">'{"title":"Board Vote","choices":["Approve","Reject","Abstain"],"duration":"24h"}'</span>
+
+<span class="comment"># → {"id":"p_8f3a...","status":"active","choices":3}</span></pre>
+        </div>
+        <div class="quickstart" style="margin-top: 20px;">
+            <div class="quickstart-label">Cast a vote with ZK proof</div>
+            <pre><span class="flag">curl</span> <span class="flag">-X POST</span> https://api.bitwrap.io/api/polls/p_8f3a.../vote <span class="flag">\
+  -H</span> <span class="string">"Content-Type: application/json"</span> <span class="flag">\
+  -d</span> <span class="string">'{"choice":0,"secret":"voter-entropy","nullifier":"unique-id"}'</span>
+
+<span class="comment"># → {"nullifier":"0x4b2c...","proof":{"a":...,"b":...,"c":...},"verified":true}</span></pre>
+        </div>
+        <div class="quickstart" style="margin-top: 20px;">
+            <div class="quickstart-label">Get results</div>
+            <pre><span class="flag">curl</span> https://api.bitwrap.io/api/polls/p_8f3a.../results
+
+<span class="comment"># → {"tally":[12,7,3],"total":22,"choices":["Approve","Reject","Abstain"]}</span></pre>
         </div>
     </section>
 
