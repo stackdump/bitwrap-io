@@ -7,6 +7,18 @@ on:
     branches: [main]
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Go vet
+        run: go vet ./...
+
   build:
     runs-on: ubuntu-latest
     steps:
@@ -28,8 +40,8 @@ jobs:
         with:
           go-version: '1.24'
 
-      - name: Go tests
-        run: make test
+      - name: Go tests (race detector)
+        run: go test -race -count=1 ./...
 
   js-parity:
     runs-on: ubuntu-latest
