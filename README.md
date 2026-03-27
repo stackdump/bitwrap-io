@@ -141,34 +141,38 @@ public/            Frontend JS/CSS/HTML (go:embed)
 
 ## .btw schema language
 
+Models can also be written as `.btw` files — a compact DSL for defining Petri net state machines. Here's a simplified poll:
+
 ```
-schema ERC20 {
-  version "1.0.0"
+schema Poll {
+  version "1.0"
 
-  register ASSETS.AVAILABLE map[address]uint256 observable
-  register ASSETS.TOTAL_SUPPLY uint256 observable
+  register voterRegistry map[uint256]uint256 observable
+  register nullifiers map[uint256]bool observable
+  register tallies map[uint256]uint256 observable
 
-  event TransferBalanceChange {
-    from: address indexed
-    to: address indexed
-    amount: uint256
+  event VoteCast {
+    nullifier: uint256 indexed
+    choice: uint256
   }
 
-  fn(transfer) {
-    var from address
-    var to address
-    var amount amount
+  fn(castVote) {
+    var nullifier uint256
+    var choice uint256
+    var weight uint256
 
-    require(ASSETS.AVAILABLE[from] >= amount && amount > 0)
-    @event TransferBalanceChange
+    require(nullifiers[nullifier] == false)
+    @event VoteCast
 
-    ASSETS.AVAILABLE[from] -|amount|> transfer
-    transfer -|amount|> ASSETS.AVAILABLE[to]
+    castVote -|weight|> tallies
+    castVote -|weight|> nullifiers
   }
 }
 ```
 
-Compile to JSON: `bitwrap -compile token.btw`
+The arrows (`-|weight|>`) are arcs — they describe how tokens flow through the net. `castVote` increments the tally for the chosen option and marks the nullifier as used, all in one atomic transition.
+
+Compile to JSON: `bitwrap -compile poll.btw`
 
 ## License
 
