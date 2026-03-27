@@ -456,12 +456,33 @@ async function loadResults(pollId) {
 
         const choices = data.choices || [];
         const voteCount = data.voteCount || 0;
-        const tallies = data.tallies || null;
-        const talliedCount = data.talliedCount || 0;
         const barsDiv = document.getElementById('results-bars');
 
+        if (data.status === 'active') {
+            // Poll is still open — tallies are hidden to prevent vote correlation
+            barsDiv.innerHTML = choices.map(c => `
+                <div class="result-bar">
+                    <div class="result-label">
+                        <span>${esc(c)}</span>
+                        <span style="color:var(--text-muted);">sealed</span>
+                    </div>
+                    <div class="result-track">
+                        <div class="result-fill" style="width:0%"></div>
+                    </div>
+                </div>
+            `).join('');
+            document.getElementById('results-total').textContent =
+                `${voteCount} vote${voteCount !== 1 ? 's' : ''} cast \u00b7 results sealed until poll closes`;
+            document.getElementById('results-nullifiers').textContent =
+                'Nullifiers hidden while poll is active.';
+            return;
+        }
+
+        // Poll is closed — show full results
+        const tallies = data.tallies || null;
+        const talliedCount = data.talliedCount || 0;
+
         if (tallies && talliedCount > 0) {
-            // Show real tallies from revealed votes
             const maxVotes = Math.max(...tallies, 1);
             barsDiv.innerHTML = choices.map((c, i) => {
                 const count = tallies[i] || 0;
@@ -479,12 +500,11 @@ async function loadResults(pollId) {
                 `;
             }).join('');
         } else {
-            // No reveals yet — show placeholders
             barsDiv.innerHTML = choices.map(c => `
                 <div class="result-bar">
                     <div class="result-label">
                         <span>${esc(c)}</span>
-                        <span style="color:var(--text-muted);">hidden</span>
+                        <span style="color:var(--text-muted);">no tallied votes</span>
                     </div>
                     <div class="result-track">
                         <div class="result-fill" style="width:0%"></div>

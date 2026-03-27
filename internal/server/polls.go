@@ -488,14 +488,26 @@ func (s *Server) handlePollResults(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := map[string]interface{}{
-		"pollId":      pollID,
-		"title":       poll.Title,
-		"choices":     poll.Choices,
-		"voteCount":   len(votes),
-		"nullifiers":  nullifiers,
-		"commitments": commitments,
-		"status":      poll.Status,
+		"pollId":  pollID,
+		"title":   poll.Title,
+		"choices": poll.Choices,
+		"status":  poll.Status,
 	}
+
+	// While active, only expose vote count — no tallies, nullifiers, or
+	// commitments.  Revealing per-vote data while voting is open lets an
+	// observer diff the tally after each vote and de-anonymize voters.
+	if poll.Status == "active" {
+		result["voteCount"] = len(votes)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
+		return
+	}
+
+	// Poll is closed — full results are safe to expose.
+	result["voteCount"] = len(votes)
+	result["nullifiers"] = nullifiers
+	result["commitments"] = commitments
 
 	// Derive tallies from the Petri net event log (event sourcing)
 	events, _ := s.store.ReadEvents(pollID)
