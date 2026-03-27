@@ -1,35 +1,143 @@
 # bitwrap
 
+[![CI](https://github.com/stackdump/bitwrap-io/actions/workflows/ci.yml/badge.svg)](https://github.com/stackdump/bitwrap-io/actions/workflows/ci.yml)
 [![jsDelivr](https://data.jsdelivr.com/v1/package/gh/stackdump/bitwrap-io/badge)](https://www.jsdelivr.com/package/gh/stackdump/bitwrap-io)
 
-**Petri nets as ZK containers.**
+**Anonymous on-chain voting with ZK proofs.**
 
-bitwrap is a tool for modeling state machines as Petri nets and compiling them into ZK proofs and Solidity smart contracts. One model produces the editor view, the circuit constraints, and the contract code.
+Create polls where every vote is backed by a Groth16 proof. No one sees how you voted. Everyone can verify the result is correct. Deploy to any EVM chain.
 
-**[bitwrap.io](https://bitwrap.io)** | **[Editor](https://app.bitwrap.io)** | **[Remix Plugin](https://solver.bitwrap.io)**
+**[bitwrap.io](https://bitwrap.io)** | **[Polls](https://bitwrap.io/poll)** | **[Editor](https://app.bitwrap.io)** | **[Docs](https://book.pflow.xyz)**
 
-## Why Petri nets?
+## Quick start
 
-A Petri net is a directed bipartite graph: places hold tokens, transitions move them, arcs define the rules. This structure is simple enough to draw on a napkin but formal enough to prove properties about.
+```bash
+git clone https://github.com/stackdump/bitwrap-io.git
+cd bitwrap-io
+make run    # serves on :8088
+```
 
-Every token standard is a Petri net. ERC-20 has three places (balances, allowances, totalSupply) and five transitions (transfer, approve, transferFrom, mint, burn). The arcs encode which maps get decremented and incremented. Guards express the `require` statements. Invariants express conservation laws.
+Three API calls to create a poll, cast a vote, and read results:
 
-The same model that a human reads in the editor is the same model that generates the Solidity contract and the same model that compiles to ZK circuit constraints. There's no translation layer, no impedance mismatch, no spec-to-implementation gap.
+```bash
+# Create a poll (requires wallet signature)
+curl -X POST https://api.bitwrap.io/api/polls \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Board Vote","choices":["Approve","Reject","Abstain"],...}'
 
-## Two angles
+# Cast a ZK-proven vote
+curl -X POST https://api.bitwrap.io/api/polls/{id}/vote \
+  -H "Content-Type: application/json" \
+  -d '{"nullifier":"0x...","voteCommitment":"0x...","proof":"..."}'
 
-**Model to proof.** Petri net structure maps directly to ZK circuit constraints. Guards become arithmetic checks (`balance >= amount` becomes a range proof). Arc weights become balance equations. Invariants become circuit assertions. The topology of the net *is* the specification of the circuit.
+# Get results (sealed while active, visible when closed)
+curl https://api.bitwrap.io/api/polls/{id}/results
+```
 
-**Verifiable execution.** Run a Petri net state machine where each transition firing produces a Groth16 proof. The proof attests that the state change was valid without revealing the full state. Token movements are private but provably correct. The model becomes its own audit trail.
+## How it works
+
+**Vote.** Voters register with a commitment hash. When they cast a ballot, a nullifier (derived from `mimcHash(voterSecret, pollId)`) prevents double-voting without revealing identity.
+
+**Prove.** Each vote generates a Groth16 proof attesting the voter is registered and the ballot is valid — without revealing the choice. The circuit verifies Merkle inclusion in the voter registry, nullifier binding, and vote range.
+
+**Tally.** Results stay sealed until the poll closes. Once closed, the final tally is publicly verifiable — anyone can audit the proofs without accessing individual ballots.
+
+### Sealed results
+
+While a poll is active, the results endpoint only returns the vote count. Tallies, nullifiers, and commitments are hidden to prevent observers from diffing the tally after each vote and correlating timing to de-anonymize voters. Full results are exposed only after the poll is closed.
+
+### Wallet-native auth
+
+Poll creation requires an EIP-191 `personal_sign` signature from MetaMask or any Ethereum wallet. Voting secrets can be derived from wallet signatures, making the nullifier deterministic per voter per poll — no accounts, no passwords.
 
 ## What it does
 
-- **Visual editor** — draw places, transitions, and arcs in the browser. Models are stored as content-addressed JSON-LD (CID = hash of canonicalized RDF).
-- **ERC templates** — start from ERC-20, ERC-721, ERC-1155, or ERC-4626. Each template is a complete Petri net with guards, arcs, and events already wired.
-- **Solidity generation** — produce a deployable `.sol` contract from any template. Guards become `require` statements, arcs become storage operations, events are emitted automatically.
-- **ZK circuits** — Groth16 circuits for each transition type (transfer, mint, burn, approve). Merkle proofs verify state inclusion without revealing balances.
-- **Remix IDE plugin** — generate and deploy contracts directly inside the Remix editor at [solver.bitwrap.io](https://solver.bitwrap.io).
-- **`.btw` DSL** — a compact schema language for defining Petri net models with registers, events, guards, and arc syntax.
+- **ZK voting** — anonymous polls with nullifier-based double-vote prevention and on-chain proof verification. Sealed results prevent vote-timing correlation.
+- **Visual editor** — draw places, transitions, and arcs in the browser. Models are stored as content-addressed JSON-LD.
+- **Solidity generation** — produce deployable contracts and Foundry test suites from any template.
+- **ZK circuits** — Groth16 circuits for transfer, mint, burn, approve, transferFrom, vestClaim, and voteCast. Merkle proofs verify state inclusion.
+- **Deploy bundle** — download a complete Foundry project (`BitwrapZKPoll.sol` + `Verifier.sol` + tests + deploy script) from `GET /api/bundle/vote`.
+- **ERC templates** — start from ERC-20, ERC-721, ERC-1155, or a Vote template. Each is a complete Petri net with guards, arcs, and events.
+- **`.btw` DSL** — a compact schema language for defining Petri net models.
+- **Remix IDE plugin** — generate and deploy contracts inside Remix at [solver.bitwrap.io](https://solver.bitwrap.io).
+
+## API
+
+### Polls
+
+```
+POST /api/polls              Create poll (wallet signature required)
+GET  /api/polls              List polls
+GET  /api/polls/{id}         Get poll details
+POST /api/polls/{id}/vote    Cast ZK-proven vote
+POST /api/polls/{id}/close   Close poll (creator signature required)
+POST /api/polls/{id}/reveal  Reveal vote choice (post-close)
+GET  /api/polls/{id}/results Poll results (sealed while active)
+```
+
+### Models & templates
+
+```
+POST /api/save               Save JSON-LD model, returns {"cid": "..."}
+GET  /o/{cid}                Load model by CID
+GET  /img/{cid}.svg          Render model as SVG
+POST /api/svg                Generate SVG from posted JSON-LD
+GET  /api/templates          List ERC templates
+GET  /api/templates/{id}     Get full template model
+POST /api/solgen             Generate Solidity from template
+POST /api/testgen            Generate Foundry tests from template
+POST /api/compile            Compile .btw DSL to schema JSON
+GET  /api/bundle/{template}  Download Foundry project (ZIP)
+```
+
+### ZK prover
+
+```
+GET  /api/circuits              List available circuits
+POST /api/prove                 Submit witness for proof generation
+GET  /api/vk/{circuit}          Download verifying key (binary)
+GET  /api/vk/{circuit}/solidity Download Solidity verifier contract
+```
+
+## CDN
+
+Client-side modules are available via jsDelivr:
+
+```html
+<script type="module">
+import { mimcHash } from 'https://cdn.jsdelivr.net/gh/stackdump/bitwrap-io@latest/public/mimc.js';
+import { MerkleTree } from 'https://cdn.jsdelivr.net/gh/stackdump/bitwrap-io@latest/public/merkle.js';
+import { buildVoteCastWitness } from 'https://cdn.jsdelivr.net/gh/stackdump/bitwrap-io@latest/public/witness-builder.js';
+</script>
+```
+
+| Module | Description |
+|--------|-------------|
+| `mimc.js` | MiMC-BN254 hash (pure BigInt, zero deps) |
+| `merkle.js` | Fixed-depth binary Merkle tree with proof generation |
+| `witness-builder.js` | Witness builders for all 7 ZK circuits |
+| `petri-view.js` | `<petri-view>` web component for Petri net editing |
+
+## Architecture
+
+Single Go binary. Vanilla JS frontend. No npm, no React, no build step.
+
+```
+cmd/bitwrap/       Entry point with -port, -data, -compile flags
+dsl/               .btw lexer, parser, AST, builder
+erc/               ERC token standard templates (020, 721, 1155, vote)
+prover/            ZK circuits (Groth16 via gnark)
+solidity/          Solidity contract + test generation
+arc/               Arc-level execution (MiMC Merkle state trees, firing)
+internal/
+  server/          HTTP handlers + poll lifecycle + wallet auth
+  petri/           Petri net model types + execution engine
+  metamodel/       Schema types (states, actions, arcs, events, constraints)
+  seal/            CID computation (JSON-LD canonicalization via URDNA2015)
+  store/           Filesystem storage (polls, votes, events)
+  svg/             SVG rendering
+public/            Frontend JS/CSS/HTML (go:embed)
+```
 
 ## .btw schema language
 
@@ -57,101 +165,10 @@ schema ERC20 {
     ASSETS.AVAILABLE[from] -|amount|> transfer
     transfer -|amount|> ASSETS.AVAILABLE[to]
   }
-
-  fn(mint) {
-    var to address
-    var amount amount
-
-    require(amount > 0)
-
-    mint -|amount|> ASSETS.AVAILABLE[to]
-    mint -|amount|> ASSETS.TOTAL_SUPPLY
-  }
 }
 ```
 
-Compile to JSON schema: `bitwrap -compile token.btw`
-
-## Quick start
-
-```bash
-git clone https://github.com/stackdump/bitwrap-io.git
-cd bitwrap-io
-make run    # serves on :8088
-```
-
-Open [localhost:8088](http://localhost:8088) for the landing page, [localhost:8088/editor](http://localhost:8088/editor) for the visual editor.
-
-## API
-
-```
-GET  /                    Landing page
-GET  /editor              Visual Petri net editor
-GET  /remix               Remix IDE plugin
-
-POST /api/save            Save JSON-LD model, returns {"cid": "..."}
-GET  /o/{cid}             Load model by CID
-GET  /img/{cid}.svg       Render model as SVG
-POST /api/svg             Generate SVG from posted JSON-LD
-
-GET  /api/templates       List ERC templates
-GET  /api/templates/{id}  Get full template model (states, actions, arcs)
-POST /api/solgen          Generate Solidity from template ID
-POST /api/compile         Compile .btw DSL source to schema JSON
-
-GET  /api/circuits        List available ZK circuits
-POST /api/prove           Submit witness for ZK proof generation
-```
-
-## CDN
-
-Client-side modules are available via jsDelivr:
-
-```html
-<script type="module">
-import { mimcHash } from 'https://cdn.jsdelivr.net/gh/stackdump/bitwrap-io@latest/public/mimc.js';
-import { MerkleTree } from 'https://cdn.jsdelivr.net/gh/stackdump/bitwrap-io@latest/public/merkle.js';
-import { buildTransferWitness } from 'https://cdn.jsdelivr.net/gh/stackdump/bitwrap-io@latest/public/witness-builder.js';
-</script>
-```
-
-| Module | Description |
-|--------|-------------|
-| `mimc.js` | MiMC-BN254 hash (pure BigInt, zero deps) |
-| `merkle.js` | Fixed-depth binary Merkle tree |
-| `witness-builder.js` | Witness builders for all 6 ZK circuits |
-| `petri-view.js` | `<petri-view>` web component for Petri net editing |
-
-## Architecture
-
-Single Go binary. Vanilla JS frontend. No npm, no React, no build step.
-
-```
-cmd/bitwrap/       Entry point with -port, -data, -compile flags
-dsl/               .btw lexer, parser, AST, builder
-erc/               ERC token standard templates (020, 721, 1155, 4626)
-prover/            ZK circuits (Groth16 via gnark)
-solidity/          Solidity contract generation
-internal/
-  server/          HTTP handlers
-  petri/           Petri net model types + execution engine
-  metamodel/       Schema types (states, actions, arcs, events, constraints)
-  seal/            CID computation (JSON-LD canonicalization via URDNA2015)
-  store/           Filesystem storage
-  svg/             SVG rendering
-  arc/             Arc-level execution (Merkle state, firing)
-  static/          Embedded public files (go:embed)
-```
-
-## Subdomains
-
-| URL | Purpose |
-|-----|---------|
-| [bitwrap.io](https://bitwrap.io) | Landing page |
-| [app.bitwrap.io](https://app.bitwrap.io) | Visual editor |
-| [api.bitwrap.io](https://api.bitwrap.io) | API |
-| [solver.bitwrap.io](https://solver.bitwrap.io) | Remix IDE plugin |
-| [prover.bitwrap.io](https://prover.bitwrap.io) | ZK prover |
+Compile to JSON: `bitwrap -compile token.btw`
 
 ## License
 
