@@ -198,6 +198,22 @@ async function loadPoll(pollId) {
         const btnClose = document.getElementById('btn-close');
         const btnReveal = document.getElementById('btn-reveal');
 
+        // Load registry info
+        const regBar = document.getElementById('registry-bar');
+        if (poll.status === 'active') {
+            fetch(`/api/polls/${pollId}/registry`).then(r => r.json()).then(reg => {
+                if (reg.count > 0 || poll.registryRoot) {
+                    regBar.style.display = 'flex';
+                    document.getElementById('registry-info').textContent =
+                        `${reg.count} registered voter${reg.count !== 1 ? 's' : ''}`;
+                } else {
+                    regBar.style.display = 'none';
+                }
+            }).catch(() => { regBar.style.display = 'none'; });
+        } else {
+            regBar.style.display = 'none';
+        }
+
         if (poll.status === 'active') {
             choicesDiv.innerHTML = poll.choices.map((c, i) => `
                 <label class="choice-option" data-idx="${i}" onclick="selectChoice(this, ${i})">
@@ -271,22 +287,48 @@ window.castVote = async function() {
         const voteChoice = BigInt(selectedChoice);
         const voterWeight = 1n;
 
-        // Build voter commitment and Merkle tree
+        // Build voter commitment and Merkle tree.
+        // If the poll has a voter registry, use the shared tree.
+        // Otherwise, create a single-leaf tree (open poll).
         const leaf = mimcHash(voterSecret, voterWeight);
-        const tree = MerkleTree.fromLeaves([leaf], 20);
+        let tree, voterIdx = 0;
+        try {
+            const regResp = await fetch(`/api/polls/${currentPollId}/registry`);
+            const regData = await regResp.json();
+            if (regData.commitments && regData.commitments.length > 0) {
+                const commitments = regData.commitments.map(c => BigInt(c));
+                tree = MerkleTree.fromLeaves(commitments, 20);
+                voterIdx = commitments.findIndex(c => c === leaf);
+                if (voterIdx < 0) {
+                    throw new Error('You are not registered for this poll. Register first.');
+                }
+            } else {
+                tree = MerkleTree.fromLeaves([leaf], 20);
+            }
+        } catch (e) {
+            if (e.message.includes('not registered')) throw e;
+            tree = MerkleTree.fromLeaves([leaf], 20);
+        }
 
         const maxChoices = BigInt(currentPollData ? currentPollData.choices.length : 256);
         const witnessResult = buildVoteCastWitness({
-            tree, voterIdx: 0, pollId, voterSecret, voteChoice, voterWeight, maxChoices
+            tree, voterIdx, pollId, voterSecret, voteChoice, voterWeight, maxChoices
         });
 
         btn.innerHTML = '<span class="spinner"></span>Generating proof...';
 
-        // Try WASM prover first, fall back to server
+        // Try WASM prover first (privacy-preserving), fall back to server
         let proofData;
+        let clientSideProved = false;
         if (window.bitwrapProver && window.bitwrapProver.prove) {
-            proofData = await window.bitwrapProver.prove(witnessResult.circuit, witnessResult.witness);
-        } else {
+            try {
+                proofData = await window.bitwrapProver.prove(witnessResult.circuit, witnessResult.witness);
+                clientSideProved = true;
+            } catch (e) {
+                console.warn('Client-side proving failed, falling back to server:', e);
+            }
+        }
+        if (!clientSideProved) {
             const resp = await fetch('/api/prove', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -301,28 +343,34 @@ window.castVote = async function() {
 
         btn.innerHTML = '<span class="spinner"></span>Submitting vote...';
 
-        // Submit vote — send commitment (not choice), witness for server-side ZK verification
-        // Strip private fields from the witness copy sent to server
-        const serverWitness = { ...witnessResult.witness };
-        // voterSecret and voteChoice stay in the local witness for proving
-        // but the server only needs them for re-verification, not storage
+        // Build vote submission — when client proved, send only proof bytes (server
+        // never sees voterSecret or voteChoice). Server fallback sends full witness.
+        const voteBody = {
+            nullifier: witnessResult.witness.nullifier,
+            voteCommitment: witnessResult.witness.voteCommitment,
+            publicInputs: [
+                witnessResult.witness.pollId,
+                witnessResult.witness.voterRegistryRoot,
+                witnessResult.witness.nullifier,
+                witnessResult.witness.voteCommitment,
+                witnessResult.witness.maxChoices,
+            ],
+        };
+
+        if (clientSideProved && proofData.proof && proofData.publicWitness) {
+            // Privacy path: send raw proof bytes, no witness
+            voteBody.proofBytes = uint8ToBase64(proofData.proof);
+            voteBody.publicWitnessBytes = uint8ToBase64(proofData.publicWitness);
+        } else {
+            // Fallback: server needs full witness for re-verification
+            voteBody.proof = JSON.stringify(proofData);
+            voteBody.witness = { ...witnessResult.witness };
+        }
 
         const voteResp = await fetch(`/api/polls/${currentPollId}/vote`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                nullifier: witnessResult.witness.nullifier,
-                voteCommitment: witnessResult.witness.voteCommitment,
-                proof: JSON.stringify(proofData),
-                witness: serverWitness,
-                publicInputs: [
-                    witnessResult.witness.pollId,
-                    witnessResult.witness.voterRegistryRoot,
-                    witnessResult.witness.nullifier,
-                    witnessResult.witness.voteCommitment,
-                    witnessResult.witness.maxChoices,
-                ],
-            })
+            body: JSON.stringify(voteBody)
         });
 
         // Store voter secret locally for reveal phase
@@ -561,6 +609,59 @@ function randomFieldElement() {
     let hex = '0x';
     for (const b of bytes) hex += b.toString(16).padStart(2, '0');
     return BigInt(hex);
+}
+
+window.registerForPoll = async function() {
+    if (!currentPollId) return showMsg('No poll selected', 'error');
+
+    const btn = document.getElementById('btn-register');
+    if (btn) { btn.disabled = true; btn.textContent = 'Registering...'; }
+
+    try {
+        let voterSecret;
+        if (window.ethereum) {
+            const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+            const msg = `bitwrap-vote:${currentPollId}`;
+            const sig = await window.ethereum.request({
+                method: 'personal_sign',
+                params: [msg, accounts[0]]
+            });
+            voterSecret = BigInt('0x' + sig.slice(2, 64));
+        } else {
+            voterSecret = randomFieldElement();
+        }
+
+        const voterWeight = 1n;
+        const commitment = mimcHash(voterSecret, voterWeight);
+
+        const resp = await fetch(`/api/polls/${currentPollId}/register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ commitment: commitment.toString() })
+        });
+
+        if (!resp.ok) {
+            const text = await resp.text();
+            throw new Error(text);
+        }
+
+        const data = await resp.json();
+        showMsg(`Registered! ${data.count} voter${data.count !== 1 ? 's' : ''} in registry.`, 'success');
+
+        // Update UI
+        const regInfo = document.getElementById('registry-info');
+        if (regInfo) regInfo.textContent = `${data.count} registered voter${data.count !== 1 ? 's' : ''}`;
+        if (btn) { btn.textContent = 'Registered'; btn.style.opacity = '0.5'; }
+    } catch (err) {
+        showMsg('Registration failed: ' + err.message, 'error');
+        if (btn) { btn.disabled = false; btn.textContent = 'Register to Vote'; }
+    }
+};
+
+function uint8ToBase64(u8) {
+    let binary = '';
+    for (let i = 0; i < u8.length; i++) binary += String.fromCharCode(u8[i]);
+    return btoa(binary);
 }
 
 // ============ Deploy On-Chain ============

@@ -418,3 +418,119 @@ func TestVoteCountAccuracy(t *testing.T) {
 		t.Fatal("tallies should be hidden while active")
 	}
 }
+
+// --- Voter registration tests ---
+
+func TestRegisterVoter(t *testing.T) {
+	srv := testServer(t)
+	pollID := createTestPoll(t, srv, "Reg Test", []string{"A", "B"})
+
+	body := `{"commitment":"12345678901234567890"}`
+	req := httptest.NewRequest("POST", "/api/polls/"+pollID+"/register", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("POST register = %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["status"] != "registered" {
+		t.Fatalf("expected status=registered, got %v", resp["status"])
+	}
+	if int(resp["count"].(float64)) != 1 {
+		t.Fatalf("expected count=1, got %v", resp["count"])
+	}
+	if resp["root"] == nil || resp["root"] == "" {
+		t.Fatal("expected non-empty registry root")
+	}
+}
+
+func TestRegisterVoterDuplicate(t *testing.T) {
+	srv := testServer(t)
+	pollID := createTestPoll(t, srv, "Dup Reg", []string{"A", "B"})
+
+	body := `{"commitment":"99999"}`
+	req := httptest.NewRequest("POST", "/api/polls/"+pollID+"/register", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("first register = %d", w.Code)
+	}
+
+	// Duplicate
+	req = httptest.NewRequest("POST", "/api/polls/"+pollID+"/register", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != 409 {
+		t.Fatalf("expected 409 for duplicate, got %d", w.Code)
+	}
+}
+
+func TestGetRegistry(t *testing.T) {
+	srv := testServer(t)
+	pollID := createTestPoll(t, srv, "Reg Query", []string{"A", "B"})
+
+	// Register two voters
+	for _, c := range []string{"111", "222"} {
+		body := fmt.Sprintf(`{"commitment":%q}`, c)
+		req := httptest.NewRequest("POST", "/api/polls/"+pollID+"/register", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		srv.ServeHTTP(w, req)
+		if w.Code != 200 {
+			t.Fatalf("register = %d", w.Code)
+		}
+	}
+
+	// Query registry
+	req := httptest.NewRequest("GET", "/api/polls/"+pollID+"/registry", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("GET registry = %d", w.Code)
+	}
+
+	var resp map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	commitments := resp["commitments"].([]interface{})
+	if len(commitments) != 2 {
+		t.Fatalf("expected 2 commitments, got %d", len(commitments))
+	}
+	if resp["root"] == nil || resp["root"] == "" {
+		t.Fatal("expected non-empty root")
+	}
+	if int(resp["count"].(float64)) != 2 {
+		t.Fatalf("expected count=2, got %v", resp["count"])
+	}
+}
+
+func TestRegistryRootConsistency(t *testing.T) {
+	srv := testServer(t)
+	pollID := createTestPoll(t, srv, "Root Test", []string{"A", "B"})
+
+	// Register a voter
+	body := `{"commitment":"42"}`
+	req := httptest.NewRequest("POST", "/api/polls/"+pollID+"/register", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	var regResp map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &regResp)
+	rootAfterReg := regResp["root"].(string)
+
+	// Query registry — root should match
+	req = httptest.NewRequest("GET", "/api/polls/"+pollID+"/registry", nil)
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	var queryResp map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &queryResp)
+	if queryResp["root"].(string) != rootAfterReg {
+		t.Fatalf("registry root mismatch: register=%s query=%s", rootAfterReg, queryResp["root"])
+	}
+}

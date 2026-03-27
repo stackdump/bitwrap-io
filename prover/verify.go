@@ -1,6 +1,7 @@
 package prover
 
 import (
+	"bytes"
 	"fmt"
 	"math/big"
 
@@ -79,6 +80,33 @@ func VerifyVoteCastWitness(p *Prover, witnessData map[string]string) error {
 
 	// Use the Prover's Verify method which proves and verifies in one step
 	return p.Verify("voteCast", assignment)
+}
+
+// VerifyVoteCastProofBytes verifies a voteCast proof from raw gnark bytes.
+// This path never sees private inputs (voterSecret, voteChoice).
+func VerifyVoteCastProofBytes(p *Prover, proofBytes, pubWitnessBytes []byte) error {
+	cc, ok := p.GetCircuit("voteCast")
+	if !ok {
+		return fmt.Errorf("voteCast circuit not registered")
+	}
+
+	proof := groth16.NewProof(ecc.BN254)
+	if _, err := proof.ReadFrom(bytes.NewReader(proofBytes)); err != nil {
+		return fmt.Errorf("invalid proof bytes: %w", err)
+	}
+
+	pubWitness, err := witness.New(ecc.BN254.ScalarField())
+	if err != nil {
+		return fmt.Errorf("witness creation failed: %w", err)
+	}
+	if _, err := pubWitness.ReadFrom(bytes.NewReader(pubWitnessBytes)); err != nil {
+		return fmt.Errorf("invalid public witness bytes: %w", err)
+	}
+
+	if err := groth16.Verify(proof, cc.VerifyingKey, pubWitness); err != nil {
+		return fmt.Errorf("proof verification failed: %w", err)
+	}
+	return nil
 }
 
 // ValidateVoteCastPublicInputs checks that a voteCast proof's public inputs

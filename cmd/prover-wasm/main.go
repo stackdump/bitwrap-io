@@ -254,6 +254,8 @@ func circuitByName(name string) frontend.Circuit {
 		return &circuits.ApproveCircuit{}
 	case "vestClaim":
 		return &circuits.VestingClaimCircuit{}
+	case "voteCast":
+		return &circuits.VoteCastCircuit{}
 	default:
 		return nil
 	}
