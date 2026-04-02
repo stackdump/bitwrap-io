@@ -149,6 +149,9 @@ func (s *State) CanReach(target Marking, maxSteps int) bool {
 	return false
 }
 
+// MarkingKey returns a string representation of the current marking for use as a map key.
+func (s *State) MarkingKey() string { return s.markingKey() }
+
 func (s *State) markingKey() string {
 	// Simple serialization for visited set
 	result := ""

@@ -105,6 +105,7 @@ func (g *generator) generateStructs() string {
 			b.WriteString("        uint256 end;\n")
 			b.WriteString("        uint256 total;\n")
 			b.WriteString("        bool revocable;\n")
+			b.WriteString("        uint256 revokedAt;\n")
 			b.WriteString("    }\n\n")
 		}
 	}
@@ -254,6 +255,9 @@ func (g *generator) generateAdminFunctions() string {
 	return b.String()
 }
 
+// IsPrivilegedAction returns true if an action should require owner authorization.
+func IsPrivilegedAction(actionID string) bool { return isPrivilegedAction(actionID) }
+
 // isPrivilegedAction returns true if an action should require owner authorization
 // Only truly admin functions should be here - not functions that have their own permission models
 func isPrivilegedAction(actionID string) bool {
@@ -387,10 +391,17 @@ func (g *generator) inferEventParams(action metamodel.Action) string {
 		delete(params, state.ID)
 	}
 
+	// Remove struct types — events cannot have struct parameters
+	for name, typ := range params {
+		if strings.Contains(typ, "VestingSchedule") || strings.Contains(typ, "memory") {
+			delete(params, name)
+		}
+	}
+
 	// Build param list
 	var parts []string
 	// Order: common params first
-	order := []string{"caller", "from", "to", "owner", "spender", "operator", "receiver", "beneficiary", "id", "tokenId", "nullifier", "choice", "pollId", "commitment", "weight", "amount", "assets", "shares"}
+	order := []string{"caller", "from", "to", "owner", "spender", "operator", "receiver", "beneficiary", "id", "tokenId", "nullifier", "choice", "pollId", "commitment", "weight", "amount", "assets", "shares", "isApproved"}
 	seen := make(map[string]bool)
 
 	for _, name := range order {
@@ -548,7 +559,7 @@ func (g *generator) collectFunctionParams(action metamodel.Action) map[string]st
 
 func (g *generator) formatParams(params map[string]string) string {
 	var parts []string
-	order := []string{"from", "to", "owner", "spender", "operator", "receiver", "beneficiary", "id", "tokenId", "nullifier", "choice", "pollId", "commitment", "weight", "amount", "assets", "shares", "approved", "nftAmount", "claimAmount", "unvestedAmount", "yieldAmount", "total", "start", "cliff", "end", "revocable"}
+	order := []string{"from", "to", "owner", "spender", "operator", "receiver", "beneficiary", "id", "tokenId", "nullifier", "choice", "pollId", "commitment", "weight", "amount", "assets", "shares", "approved", "isApproved", "nftAmount", "claimAmount", "unvestedAmount", "yieldAmount", "total", "start", "cliff", "end", "revocable"}
 	seen := make(map[string]bool)
 
 	for _, name := range order {
@@ -567,7 +578,9 @@ func (g *generator) formatParams(params map[string]string) string {
 	return strings.Join(parts, ", ")
 }
 
-// extractGuardParams finds parameter names used in guard expressions using AST parsing.
+// ExtractGuardParams finds parameter names used in guard expressions.
+func ExtractGuardParams(guard string) map[string]string { return extractGuardParams(guard) }
+
 func extractGuardParams(guard string) map[string]string {
 	if guard == "" {
 		return nil
@@ -681,6 +694,10 @@ func (g *generator) inferEventArgs(action metamodel.Action) string {
 			params[key] = true
 		}
 		if arc.Value != "" && !isLiteralValue(arc.Value) {
+			// Skip struct-typed values — events can't emit structs
+			if g.inferValueType(arc) == "VestingSchedule memory" {
+				continue
+			}
 			params[arc.Value] = true
 		}
 	}
@@ -690,6 +707,9 @@ func (g *generator) inferEventArgs(action metamodel.Action) string {
 			params[key] = true
 		}
 		if arc.Value != "" && !isLiteralValue(arc.Value) {
+			if g.inferValueType(arc) == "VestingSchedule memory" {
+				continue
+			}
 			params[arc.Value] = true
 		}
 	}
@@ -700,7 +720,7 @@ func (g *generator) inferEventArgs(action metamodel.Action) string {
 	}
 
 	var parts []string
-	order := []string{"caller", "from", "to", "owner", "spender", "operator", "receiver", "beneficiary", "id", "tokenId", "nullifier", "choice", "pollId", "commitment", "weight", "amount", "assets", "shares", "approved", "nftAmount", "claimAmount", "unvestedAmount", "yieldAmount", "total"}
+	order := []string{"caller", "from", "to", "owner", "spender", "operator", "receiver", "beneficiary", "id", "tokenId", "nullifier", "choice", "pollId", "commitment", "weight", "amount", "assets", "shares", "approved", "isApproved", "nftAmount", "claimAmount", "unvestedAmount", "yieldAmount", "total"}
 	seen := make(map[string]bool)
 
 	for _, name := range order {
@@ -777,7 +797,7 @@ func (g *generator) generateArcOperations(actionID string) (inputs []string, out
 				outputs = append(outputs, fmt.Sprintf("%s = %s;", accessor, translateValue(value)))
 			} else if strings.Contains(valueType, "VestingSchedule") {
 				// Struct assignment
-				outputs = append(outputs, fmt.Sprintf("%s = VestingSchedule(start, cliff, end, total, revocable);", accessor))
+				outputs = append(outputs, fmt.Sprintf("%s = VestingSchedule(start, cliff, end, total, revocable, 0);", accessor))
 			} else if strings.Contains(valueType, "uint256") {
 				// Increment for numeric maps
 				outputs = append(outputs, fmt.Sprintf("%s += %s;", accessor, value))
@@ -855,9 +875,21 @@ func (g *generator) generateEpochFunctions() string {
 	b.WriteString("        eventSequence = 0;\n")
 	b.WriteString("    }\n\n")
 
+	// Find the schedule and claimed state variable names from the schema
+	schedulesVar := "vestSchedules"
+	claimedVar := "vestClaimed"
+	for _, state := range g.schema.States {
+		if strings.Contains(state.Type, "VestingSchedule") {
+			schedulesVar = state.ID
+		}
+		if state.ID == "claimed" || state.ID == "vestClaimed" {
+			claimedVar = state.ID
+		}
+	}
+
 	// vestedAmount - calculates vested tokens for a schedule
 	b.WriteString("    function vestedAmount(uint256 tokenId) public view returns (uint256) {\n")
-	b.WriteString("        VestingSchedule storage s = vestSchedules[tokenId];\n")
+	b.WriteString(fmt.Sprintf("        VestingSchedule storage s = %s[tokenId];\n", schedulesVar))
 	b.WriteString("        if (currentEpoch < s.cliff) {\n")
 	b.WriteString("            return 0;\n")
 	b.WriteString("        }\n")
@@ -873,11 +905,11 @@ func (g *generator) generateEpochFunctions() string {
 	// claimableAmount - vested minus already claimed
 	b.WriteString("    function claimableAmount(uint256 tokenId) public view returns (uint256) {\n")
 	b.WriteString("        uint256 vested = vestedAmount(tokenId);\n")
-	b.WriteString("        uint256 claimed = vestClaimed[tokenId];\n")
-	b.WriteString("        if (vested <= claimed) {\n")
+	b.WriteString(fmt.Sprintf("        uint256 alreadyClaimed = %s[tokenId];\n", claimedVar))
+	b.WriteString("        if (vested <= alreadyClaimed) {\n")
 	b.WriteString("            return 0;\n")
 	b.WriteString("        }\n")
-	b.WriteString("        return vested - claimed;\n")
+	b.WriteString("        return vested - alreadyClaimed;\n")
 	b.WriteString("    }\n\n")
 
 	return b.String()
@@ -915,9 +947,17 @@ func (g *generator) generateViewFunctions() string {
 		// Public state variables already have auto-generated getters
 		// Add helper functions for common queries
 		if state.ID == "balances" {
-			b.WriteString("    function balanceOf(address account) external view returns (uint256) {\n")
-			b.WriteString("        return balances[account];\n")
-			b.WriteString("    }\n\n")
+			if strings.HasPrefix(state.Type, "map[uint256]map[address]") {
+				// ERC-1155 style: balances[id][account]
+				b.WriteString("    function balanceOf(address account, uint256 id) external view returns (uint256) {\n")
+				b.WriteString("        return balances[id][account];\n")
+				b.WriteString("    }\n\n")
+			} else {
+				// ERC-20 style: balances[account]
+				b.WriteString("    function balanceOf(address account) external view returns (uint256) {\n")
+				b.WriteString("        return balances[account];\n")
+				b.WriteString("    }\n\n")
+			}
 		}
 
 		if state.ID == "allowances" {
@@ -937,6 +977,19 @@ func (g *generator) generateViewFunctions() string {
 			b.WriteString("        return operators[owner][operator];\n")
 			b.WriteString("    }\n\n")
 		}
+	}
+
+	// Vault-specific view helpers (ERC-4626)
+	if strings.HasPrefix(g.schema.Version, "ERC-04626:") {
+		b.WriteString("    /// @notice Maximum amount of assets that can be withdrawn by the owner\n")
+		b.WriteString("    function maxWithdraw(address owner) public view returns (uint256) {\n")
+		b.WriteString("        if (totalShares == 0) return 0;\n")
+		b.WriteString("        return (balances[owner] * totalAssets) / totalShares;\n")
+		b.WriteString("    }\n\n")
+		b.WriteString("    /// @notice Maximum amount of shares that can be redeemed by the owner\n")
+		b.WriteString("    function maxRedeem(address owner) public view returns (uint256) {\n")
+		b.WriteString("        return balances[owner];\n")
+		b.WriteString("    }\n\n")
 	}
 
 	// Vote-specific view helpers
@@ -1110,11 +1163,14 @@ func toEventName(actionID string) string {
 	return strings.ToUpper(actionID[:1]) + actionID[1:]
 }
 
+// InferParamType returns the Solidity type for a parameter name.
+func InferParamType(name string) string { return inferParamType(name) }
+
 func inferParamType(name string) string {
 	switch name {
 	case "from", "to", "owner", "spender", "operator", "receiver", "beneficiary", "caller":
 		return "address"
-	case "approved":
+	case "approved", "isApproved":
 		return "bool"
 	case "id", "tokenId", "amount", "assets", "shares", "nftAmount", "claimAmount", "unvestedAmount", "yieldAmount", "total", "start", "cliff", "end",
 		"nullifier", "choice", "pollId", "commitment", "weight":

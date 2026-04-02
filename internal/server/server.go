@@ -442,7 +442,11 @@ func (s *Server) handleGenesisGen(w http.ResponseWriter, r *http.Request) {
 		Actions:     req.Actions,
 		TotalEpochs: req.Epochs,
 	}
-	schemaName := tmpl.Schema().Name
+	schema := tmpl.Schema()
+	if strings.HasPrefix(schema.Version, "Vote:") {
+		config.ConstructorArgs = "0 /* voterRegistryRoot */, 10 /* maxChoices */, address(0) /* verifier — deploy Verifier.sol first */"
+	}
+	schemaName := schema.Name
 	code := solidity.GenerateGenesis(schemaName, config, solidity.DefaultAddresses())
 
 	w.Header().Set("Content-Type", "application/json")

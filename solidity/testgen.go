@@ -112,20 +112,32 @@ func (g *testGenerator) generateActionTest(action metamodel.Action) string {
 		b.WriteString("        token.createPoll();\n")
 	}
 
-	// Setup: if action is privileged, prank as owner
-	if isPrivilegedAction(funcName) {
-		b.WriteString("        // Privileged action — called as contract owner\n")
-	} else {
-		b.WriteString("        vm.prank(alice);\n")
+	// Vault deposit/mint/withdraw/redeem need external asset balances that can't be
+	// seeded from within the contract. Test that the guard reverts on zero-value call.
+	if g.isVaultAction(funcName) {
+		zeroParams := g.inferZeroParams(action)
+		b.WriteString("        // Vault action requires external asset setup — test guard revert\n")
+		b.WriteString("        vm.expectRevert();\n")
+		b.WriteString(fmt.Sprintf("        token.%s(%s);\n", funcName, zeroParams))
+		b.WriteString("    }\n\n")
+		return b.String()
 	}
 
-	// If we need to mint first for transfer/burn/approve actions, add setup
-	if funcName == "transfer" || funcName == "burn" || funcName == "approve" || funcName == "transferFrom" {
-		b.WriteString("        // Setup: mint tokens first\n")
-		if g.hasAction("mint") {
-			b.WriteString("        token.mint(alice, 1000);\n")
+	// If action consumes tokens, mint first (as owner)
+	if g.needsMintSetup(funcName) && g.hasAction("mint") {
+		b.WriteString("        // Setup: mint tokens first (as owner)\n")
+		b.WriteString(fmt.Sprintf("        %s\n", g.mintSetupCall()))
+		// For transferFrom, also need approve setup
+		if funcName == "transferFrom" && g.hasAction("approve") {
+			b.WriteString("        // Setup: approve alice's tokens for spending\n")
 			b.WriteString("        vm.prank(alice);\n")
+			b.WriteString(fmt.Sprintf("        %s\n", g.approveSetupCall()))
 		}
+	}
+
+	// Prank as non-owner for non-privileged actions
+	if !isPrivilegedAction(funcName) {
+		b.WriteString("        vm.prank(alice);\n")
 	}
 
 	b.WriteString(fmt.Sprintf("        token.%s(%s);\n", funcName, params))
@@ -209,12 +221,9 @@ func (g *testGenerator) generateViewTests() string {
 			continue
 		}
 		if strings.HasPrefix(state.Type, "map[") {
-			// Map types need a key argument — determine key type
-			keyArg := "alice" // default: address key
-			if strings.HasPrefix(state.Type, "map[uint256]") {
-				keyArg = "1"
-			}
-			b.WriteString(fmt.Sprintf("        token.%s(%s);\n", state.ID, keyArg))
+			// Map types need key arguments — determine from type nesting
+			keyArgs := inferMapKeyArgs(state.Type)
+			b.WriteString(fmt.Sprintf("        token.%s(%s);\n", state.ID, strings.Join(keyArgs, ", ")))
 		} else {
 			b.WriteString(fmt.Sprintf("        token.%s();\n", state.ID))
 		}
@@ -302,47 +311,111 @@ func translateConstraintExpr(expr string, schema *metamodel.Schema) string {
 }
 
 func (g *testGenerator) inferTestParams(action metamodel.Action) string {
-	params := collectArcParams(g.schema, action.ID)
+	params := g.collectFunctionParams(action)
 
 	var parts []string
 	for _, name := range sortedParams(params) {
-		switch params[name] {
-		case "address":
-			if name == "to" || name == "beneficiary" || name == "receiver" {
-				parts = append(parts, "bob")
-			} else if name == "spender" || name == "operator" {
-				parts = append(parts, "charlie")
-			} else {
-				parts = append(parts, "alice")
-			}
-		case "uint256":
-			parts = append(parts, "100")
-		case "bool":
-			parts = append(parts, "true")
-		default:
-			parts = append(parts, "0")
-		}
-	}
-
-	// Add guard-extracted params (excluding state variables and literals)
-	if action.Guard != "" {
-		guardParams := extractGuardParams(action.Guard)
-		for _, state := range g.schema.States {
-			delete(guardParams, state.ID)
-		}
-		delete(guardParams, "caller")
-		for name := range guardParams {
-			if _, exists := params[name]; !exists && !isLiteralValue(name) {
-				parts = append(parts, "alice")
-			}
-		}
+		parts = append(parts, g.testValueForParam(name, params[name]))
 	}
 
 	return strings.Join(parts, ", ")
 }
 
+// testValueForParam returns an appropriate test value for a given parameter name and type.
+func (g *testGenerator) testValueForParam(name, typ string) string {
+	switch typ {
+	case "address":
+		if name == "to" || name == "beneficiary" || name == "receiver" {
+			return "bob"
+		} else if name == "spender" || name == "operator" {
+			return "charlie"
+		}
+		return "alice"
+	case "uint256":
+		return "100"
+	case "bool":
+		return "true"
+	default:
+		return "0"
+	}
+}
+
+// collectFunctionParams collects all parameters matching the codegen function signature.
+// This ensures testgen generates calls with the correct argument count and types.
+func (g *testGenerator) collectFunctionParams(action metamodel.Action) map[string]string {
+	params := make(map[string]string)
+
+	for _, arc := range g.schema.InputArcs(action.ID) {
+		for _, key := range arc.Keys {
+			params[key] = inferParamType(key)
+		}
+		if arc.Value != "" && !isLiteralValue(arc.Value) {
+			params[arc.Value] = inferParamType(arc.Value)
+		}
+	}
+
+	for _, arc := range g.schema.OutputArcs(action.ID) {
+		for _, key := range arc.Keys {
+			params[key] = inferParamType(key)
+		}
+		if arc.Value != "" && !isLiteralValue(arc.Value) {
+			params[arc.Value] = inferParamType(arc.Value)
+		}
+	}
+
+	// Add guard-extracted params with proper types
+	if action.Guard != "" {
+		guardParams := extractGuardParams(action.Guard)
+		for name, typ := range guardParams {
+			if _, exists := params[name]; !exists {
+				params[name] = typ
+			}
+		}
+	}
+
+	delete(params, "caller")
+	for _, state := range g.schema.States {
+		delete(params, state.ID)
+	}
+
+	// Add default "amount" for arcs with empty Value where codegen defaults to "amount".
+	// Only applies when the state type stores uint256 values (not address, bool, or structs).
+	needsAmount := false
+	for _, arc := range g.schema.InputArcs(action.ID) {
+		if arc.Value == "" {
+			state := g.schema.StateByID(arc.Source)
+			if state != nil && g.isNumericState(state) {
+				needsAmount = true
+			}
+		}
+	}
+	for _, arc := range g.schema.OutputArcs(action.ID) {
+		if arc.Value == "" {
+			state := g.schema.StateByID(arc.Target)
+			if state != nil && g.isNumericState(state) {
+				needsAmount = true
+			}
+		}
+	}
+	if needsAmount {
+		params["amount"] = "uint256"
+	}
+
+	// Add VestingSchedule struct fields for struct output arcs
+	for _, arc := range g.schema.OutputArcs(action.ID) {
+		state := g.schema.StateByID(arc.Target)
+		if state != nil && strings.Contains(state.Type, "VestingSchedule") && arc.Value == "schedule" {
+			for _, f := range []string{"start", "cliff", "end", "total", "revocable"} {
+				params[f] = inferParamType(f)
+			}
+		}
+	}
+
+	return params
+}
+
 func (g *testGenerator) inferZeroParams(action metamodel.Action) string {
-	params := collectArcParams(g.schema, action.ID)
+	params := g.collectFunctionParams(action)
 
 	var parts []string
 	for _, name := range sortedParams(params) {
@@ -361,6 +434,97 @@ func (g *testGenerator) inferZeroParams(action metamodel.Action) string {
 	return strings.Join(parts, ", ")
 }
 
+// isNumericState returns true if the state stores uint256 values (not address, bool, or structs).
+func (g *testGenerator) isNumericState(state *metamodel.State) bool {
+	if strings.Contains(state.Type, "VestingSchedule") {
+		return false
+	}
+	if isMapType(state.Type) {
+		vt := getMapValueType(state.Type)
+		return vt != "address" && vt != "bool" && vt != ""
+	}
+	return state.Type == "uint256" || state.Type == ""
+}
+
+// needsMintSetup returns true for actions that consume tokens and need minting first.
+func (g *testGenerator) needsMintSetup(funcName string) bool {
+	switch funcName {
+	case "transfer", "burn", "approve", "transferFrom",
+		"safeTransferFrom", "safeBatchTransferFrom", "burnBatch":
+		return true
+	}
+	return false
+}
+
+// isVaultAction returns true for vault actions that need external asset setup.
+func (g *testGenerator) isVaultAction(funcName string) bool {
+	if !strings.HasPrefix(g.schema.Version, "ERC-04626:") {
+		return false
+	}
+	switch funcName {
+	case "deposit", "mint", "withdraw", "redeem":
+		return true
+	}
+	return false
+}
+
+// mintSetupCall returns the Solidity call to mint tokens for test setup.
+// Adapts to the template's mint function signature.
+func (g *testGenerator) mintSetupCall() string {
+	for _, action := range g.schema.Actions {
+		if action.ID != "mint" {
+			continue
+		}
+		params := g.collectFunctionParams(action)
+		var parts []string
+		for _, name := range sortedParams(params) {
+			switch name {
+			case "to", "beneficiary", "receiver":
+				parts = append(parts, "alice")
+			case "tokenId", "id":
+				parts = append(parts, "1")
+			case "amount", "total", "nftAmount":
+				parts = append(parts, "1000")
+			case "shares", "assets":
+				parts = append(parts, "1000")
+			default:
+				parts = append(parts, g.testValueForParam(name, params[name]))
+			}
+		}
+		return fmt.Sprintf("token.mint(%s);", strings.Join(parts, ", "))
+	}
+	return "token.mint(alice, 1000);"
+}
+
+// approveSetupCall returns the Solidity call to approve tokens for transferFrom setup.
+func (g *testGenerator) approveSetupCall() string {
+	for _, action := range g.schema.Actions {
+		if action.ID != "approve" {
+			continue
+		}
+		params := g.collectFunctionParams(action)
+		var parts []string
+		for _, name := range sortedParams(params) {
+			switch name {
+			case "owner", "from":
+				parts = append(parts, "alice")
+			case "spender", "operator", "to":
+				parts = append(parts, "charlie")
+			case "amount":
+				parts = append(parts, "1000")
+			case "tokenId", "id":
+				parts = append(parts, "1")
+			case "isApproved", "approved":
+				parts = append(parts, "true")
+			default:
+				parts = append(parts, g.testValueForParam(name, params[name]))
+			}
+		}
+		return fmt.Sprintf("token.approve(%s);", strings.Join(parts, ", "))
+	}
+	return "token.approve(alice, charlie, 1000);"
+}
+
 func (g *testGenerator) hasAction(id string) bool {
 	for _, a := range g.schema.Actions {
 		if a.ID == id {
@@ -370,40 +534,39 @@ func (g *testGenerator) hasAction(id string) bool {
 	return false
 }
 
-// collectArcParams gathers parameter names and types from arcs.
-func collectArcParams(schema *metamodel.Schema, actionID string) map[string]string {
-	params := make(map[string]string)
-
-	for _, arc := range schema.InputArcs(actionID) {
-		for _, key := range arc.Keys {
-			params[key] = inferParamType(key)
+// inferMapKeyArgs returns test argument values for a Solidity mapping's key types.
+// e.g., "map[address]uint256" → ["alice"], "map[address]map[address]uint256" → ["alice", "bob"],
+// "map[uint256]map[address]uint256" → ["1", "alice"]
+func inferMapKeyArgs(mapType string) []string {
+	var args []string
+	remaining := mapType
+	for strings.HasPrefix(remaining, "map[") {
+		// Extract key type between [ and ]
+		close := strings.Index(remaining, "]")
+		if close == -1 {
+			break
 		}
-		if arc.Value != "" && !isLiteralValue(arc.Value) {
-			params[arc.Value] = "uint256"
+		keyType := remaining[4:close]
+		switch keyType {
+		case "address":
+			if len(args) == 0 {
+				args = append(args, "alice")
+			} else {
+				args = append(args, "bob")
+			}
+		case "uint256":
+			args = append(args, "1")
+		default:
+			args = append(args, "0")
 		}
+		remaining = remaining[close+1:]
 	}
-
-	for _, arc := range schema.OutputArcs(actionID) {
-		for _, key := range arc.Keys {
-			params[key] = inferParamType(key)
-		}
-		if arc.Value != "" && !isLiteralValue(arc.Value) {
-			params[arc.Value] = "uint256"
-		}
-	}
-
-	// Remove state variable names — these are contract storage, not function params
-	for _, state := range schema.States {
-		delete(params, state.ID)
-	}
-	delete(params, "caller")
-
-	return params
+	return args
 }
 
 // sortedParams returns param names in a stable order.
 func sortedParams(params map[string]string) []string {
-	order := []string{"caller", "from", "to", "owner", "spender", "operator", "receiver", "beneficiary", "id", "tokenId", "nullifier", "choice", "pollId", "commitment", "weight", "amount", "assets", "shares", "total", "claimAmount"}
+	order := []string{"caller", "from", "to", "owner", "spender", "operator", "receiver", "beneficiary", "id", "tokenId", "nullifier", "choice", "pollId", "commitment", "weight", "amount", "assets", "shares", "approved", "isApproved", "total", "claimAmount", "nftAmount", "unvestedAmount", "yieldAmount", "start", "cliff", "end", "revocable"}
 	var result []string
 	seen := make(map[string]bool)
 

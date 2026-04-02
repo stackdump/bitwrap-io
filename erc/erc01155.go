@@ -30,7 +30,7 @@ func NewERC01155(name string) *ERC01155 {
 	schema.AddArc(metamodel.Arc{Source: "safeTransferFrom", Target: "balances", Keys: []string{"id", "to"}})
 	schema.AddArc(metamodel.Arc{Source: "balances", Target: "safeBatchTransferFrom", Keys: []string{"id", "from"}})
 	schema.AddArc(metamodel.Arc{Source: "safeBatchTransferFrom", Target: "balances", Keys: []string{"id", "to"}})
-	schema.AddArc(metamodel.Arc{Source: "setApprovalForAll", Target: "operators", Keys: []string{"owner", "operator"}, Value: "approved"})
+	schema.AddArc(metamodel.Arc{Source: "setApprovalForAll", Target: "operators", Keys: []string{"owner", "operator"}, Value: "isApproved"})
 	schema.AddArc(metamodel.Arc{Source: "mint", Target: "balances", Keys: []string{"id", "to"}})
 	schema.AddArc(metamodel.Arc{Source: "mintBatch", Target: "balances", Keys: []string{"id", "to"}})
 	schema.AddArc(metamodel.Arc{Source: "balances", Target: "burn", Keys: []string{"id", "from"}})
