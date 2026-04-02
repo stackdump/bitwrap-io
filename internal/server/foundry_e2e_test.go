@@ -276,7 +276,6 @@ func smokeTestContract(t *testing.T, env *anvilEnv, tmpl string) {
 	}
 
 	t.Logf("reachability: %d/%d transitions coverable from initial marking", len(covered), total)
-	t.Logf("firing sequence: %v", sequence)
 
 	if len(sequence) == 0 {
 		t.Log("no transitions fireable from initial marking (all gated by keyed arcs)")
@@ -286,56 +285,52 @@ func smokeTestContract(t *testing.T, env *anvilEnv, tmpl string) {
 	// Build function signatures from the schema for each action
 	sigs := buildFunctionSigs(schema)
 
-	// Pre-setup: mint tokens and set approvals before running the sequence.
-	// This ensures token-consuming transitions have the state they need.
-	hasConsumers := false
-	for _, tid := range sequence {
-		if needsTokenSetup(tid) {
-			hasConsumers = true
-			break
-		}
-	}
-	if hasConsumers {
-		if mintSig, hasMint := sigs["mint"]; hasMint {
-			t.Log("setup: minting tokens to account1...")
-			// Mint a large amount so multiple operations don't deplete the balance
-			mintArgs := make([]string, len(mintSig.args))
-			copy(mintArgs, mintSig.args)
-			for i, a := range mintArgs {
-				if a == "100" {
-					mintArgs[i] = "10000" // enough for many operations
-					break
-				}
+	// Sort the sequence by dependency priority instead of raw BFS order.
+	// This ensures mint runs before transfer, approve before transferFrom, etc.
+	ordered := orderByDependency(dedupSequence(sequence))
+	t.Logf("execution order: %v", ordered)
+
+	// Pre-setup: mint tokens to account1 with enough balance for all operations.
+	if mintSig, hasMint := sigs["mint"]; hasMint {
+		t.Log("setup: minting tokens to account1...")
+		mintArgs := make([]string, len(mintSig.args))
+		copy(mintArgs, mintSig.args)
+		for i, a := range mintArgs {
+			if a == "100" || a == "1000" {
+				mintArgs[i] = "10000"
+				break
 			}
-			castSendSoft(t, env, anvilPrivKey0, mintSig.signature, mintArgs...)
 		}
-		if appSig, hasApprove := sigs["approve"]; hasApprove {
-			t.Log("setup: account1 approving account0 as spender...")
-			castSendSoft(t, env, anvilPrivKey1, appSig.signature, appSig.args...)
-		}
+		castSendSoft(t, env, anvilPrivKey0, mintSig.signature, mintArgs...)
 	}
 
-	// Execute the firing sequence on-chain.
-	tokenIdCounter := 1
-	fired := 0
+	// For vesting templates: advance epoch past cliff so claim works
+	if strings.HasPrefix(schema.Version, "ERC-05725:") {
+		t.Log("setup: advancing epochs for vesting...")
+		castSendSoft(t, env, anvilPrivKey0, "advanceEpoch(uint256)", "200")
+	}
 
-	for _, tid := range sequence {
+	// Execute the ordered sequence on-chain.
+	fired := 0
+	tokenIdCounter := 2 // 1 was used in setup mint
+
+	for _, tid := range ordered {
 		sig, ok := sigs[tid]
 		if !ok {
-			t.Logf("skip %s: no cast signature", tid)
+			t.Logf("skip %s: no signature", tid)
 			continue
 		}
 
-		// For repeated mint calls (e.g., NFTs), use unique tokenId
 		args := sig.args
-		if tid == "mint" && tokenIdCounter > 1 {
-			args = replaceTokenIdArg(sig, tokenIdCounter)
-		}
+
+		// For mint (after setup), use a fresh tokenId
 		if tid == "mint" {
+			args = replaceTokenIdArg(sig, tokenIdCounter)
 			tokenIdCounter++
 		}
 
-		// Determine caller based on action semantics
+		// Approve setup: account1 (owner) approves account0 (spender)
+		// Must be called by the token owner
 		privKey := callerForAction(tid)
 
 		out, revertReason := castSendDebug(t, env, privKey, sig.signature, args...)
@@ -346,7 +341,7 @@ func smokeTestContract(t *testing.T, env *anvilEnv, tmpl string) {
 			t.Logf("fired %s ✗ (%s)", tid, revertReason)
 		}
 	}
-	t.Logf("on-chain: %d/%d transitions fired successfully", fired, len(sequence))
+	t.Logf("on-chain: %d/%d transitions fired successfully", fired, len(ordered))
 }
 
 // callerForAction returns the appropriate private key for calling an action.
@@ -374,6 +369,50 @@ func replaceTokenIdArg(sig actionSig, newId int) []string {
 		}
 	}
 	return args
+}
+
+// orderByDependency sorts transitions by execution priority:
+// 1. Setup (mint, create, createPoll, harvest)
+// 2. Auth (approve, setApprovalForAll)
+// 3. Movement (transfer, transferFrom, safeTransferFrom, ...)
+// 4. Destructive (burn, burnBatch, closePoll, revoke, claim)
+func orderByDependency(transitions []string) []string {
+	priority := func(tid string) int {
+		switch tid {
+		case "mint", "mintBatch", "createPoll", "create", "harvest", "vaultHarvest":
+			return 0 // setup first
+		case "approve", "setApprovalForAll":
+			return 1 // auth second
+		case "transfer", "transferFrom", "safeTransferFrom", "safeBatchTransferFrom":
+			return 2 // movement third
+		case "burn", "burnBatch", "closePoll", "revoke", "claim":
+			return 3 // destructive last
+		default:
+			return 2
+		}
+	}
+
+	sorted := make([]string, len(transitions))
+	copy(sorted, transitions)
+	for i := 1; i < len(sorted); i++ {
+		for j := i; j > 0 && priority(sorted[j]) < priority(sorted[j-1]); j-- {
+			sorted[j], sorted[j-1] = sorted[j-1], sorted[j]
+		}
+	}
+	return sorted
+}
+
+// dedupSequence removes duplicate transition IDs while preserving order.
+func dedupSequence(seq []string) []string {
+	seen := make(map[string]bool)
+	var result []string
+	for _, tid := range seq {
+		if !seen[tid] {
+			seen[tid] = true
+			result = append(result, tid)
+		}
+	}
+	return result
 }
 
 func needsTokenSetup(actionID string) bool {

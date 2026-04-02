@@ -423,7 +423,13 @@ func (g *testGenerator) inferZeroParams(action metamodel.Action) string {
 		case "address":
 			parts = append(parts, "address(0)")
 		case "uint256":
-			parts = append(parts, "0")
+			// Use 1 for amounts so guards like "balances[from] >= amount" actually fail
+			// (0 >= 0 would pass, but 0 >= 1 fails)
+			if name == "amount" || name == "assets" || name == "shares" || name == "total" || name == "claimAmount" {
+				parts = append(parts, "1")
+			} else {
+				parts = append(parts, "0")
+			}
 		case "bool":
 			parts = append(parts, "false")
 		default:
@@ -469,7 +475,7 @@ func (g *testGenerator) isVaultAction(funcName string) bool {
 }
 
 // mintSetupCall returns the Solidity call to mint tokens for test setup.
-// Adapts to the template's mint function signature.
+// Uses tokenId=100 to match the default test param, so approve(100, ...) works.
 func (g *testGenerator) mintSetupCall() string {
 	for _, action := range g.schema.Actions {
 		if action.ID != "mint" {
@@ -482,7 +488,7 @@ func (g *testGenerator) mintSetupCall() string {
 			case "to", "beneficiary", "receiver":
 				parts = append(parts, "alice")
 			case "tokenId", "id":
-				parts = append(parts, "1")
+				parts = append(parts, "100") // matches default test param
 			case "amount", "total", "nftAmount":
 				parts = append(parts, "1000")
 			case "shares", "assets":
