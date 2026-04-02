@@ -286,56 +286,64 @@ func smokeTestContract(t *testing.T, env *anvilEnv, tmpl string) {
 	// Build function signatures from the schema for each action
 	sigs := buildFunctionSigs(schema)
 
-	// Execute the firing sequence on-chain with multi-actor orchestration.
-	// The Petri net gives us the transition ordering; we inject setup steps
-	// (mint, approve) as needed for multi-actor token flows.
-	minted := false
-	approved := false
+	// Pre-setup: mint tokens and set approvals before running the sequence.
+	// This ensures token-consuming transitions have the state they need.
+	hasConsumers := false
+	for _, tid := range sequence {
+		if needsTokenSetup(tid) {
+			hasConsumers = true
+			break
+		}
+	}
+	if hasConsumers {
+		if mintSig, hasMint := sigs["mint"]; hasMint {
+			t.Log("setup: minting tokens to account1...")
+			// Mint a large amount so multiple operations don't deplete the balance
+			mintArgs := make([]string, len(mintSig.args))
+			copy(mintArgs, mintSig.args)
+			for i, a := range mintArgs {
+				if a == "100" {
+					mintArgs[i] = "10000" // enough for many operations
+					break
+				}
+			}
+			castSendSoft(t, env, anvilPrivKey0, mintSig.signature, mintArgs...)
+		}
+		if appSig, hasApprove := sigs["approve"]; hasApprove {
+			t.Log("setup: account1 approving account0 as spender...")
+			castSendSoft(t, env, anvilPrivKey1, appSig.signature, appSig.args...)
+		}
+	}
+
+	// Execute the firing sequence on-chain.
 	tokenIdCounter := 1
 	fired := 0
 
 	for _, tid := range sequence {
 		sig, ok := sigs[tid]
 		if !ok {
-			// Zero-param functions still have a signature like "createPoll()"
 			t.Logf("skip %s: no cast signature", tid)
 			continue
 		}
 
-		// Inject mint setup before token-consuming actions
-		if needsTokenSetup(tid) && !minted {
-			if mintSig, hasMint := sigs["mint"]; hasMint {
-				t.Log("setup: minting tokens...")
-				castSendSoft(t, env, anvilPrivKey0, mintSig.signature, mintSig.args...)
-				minted = true
-			}
-		}
-
-		// Inject approve before transferFrom (account1 approves account0 as spender)
-		if tid == "transferFrom" && !approved {
-			if appSig, hasApprove := sigs["approve"]; hasApprove {
-				t.Log("setup: account1 approving account0 as spender...")
-				castSendSoft(t, env, anvilPrivKey1, appSig.signature, appSig.args...)
-				approved = true
-			}
-		}
-
 		// For repeated mint calls (e.g., NFTs), use unique tokenId
 		args := sig.args
-		if tid == "mint" && minted {
-			tokenIdCounter++
+		if tid == "mint" && tokenIdCounter > 1 {
 			args = replaceTokenIdArg(sig, tokenIdCounter)
+		}
+		if tid == "mint" {
+			tokenIdCounter++
 		}
 
 		// Determine caller based on action semantics
 		privKey := callerForAction(tid)
 
-		out := castSendSoft(t, env, privKey, sig.signature, args...)
+		out, revertReason := castSendDebug(t, env, privKey, sig.signature, args...)
 		if out != "" {
 			fired++
 			t.Logf("fired %s ✓", tid)
 		} else {
-			t.Logf("fired %s ✗ (reverted)", tid)
+			t.Logf("fired %s ✗ (%s)", tid, revertReason)
 		}
 	}
 	t.Logf("on-chain: %d/%d transitions fired successfully", fired, len(sequence))
@@ -391,14 +399,13 @@ func buildFunctionSigs(schema *metamodel.Schema) map[string]actionSig {
 	for _, action := range schema.Actions {
 		params := collectCastParams(schema, action)
 
-		// Build signature string and default args
+		// Build signature string and context-aware test args
 		var types []string
 		var args []string
 		for _, p := range params {
 			types = append(types, p.solType)
-			args = append(args, p.testValue)
+			args = append(args, actionTestArg(action.ID, p.name, p.solType))
 		}
-		// Zero-param functions are valid (e.g., createPoll, closePoll)
 		sig := fmt.Sprintf("%s(%s)", action.ID, strings.Join(types, ","))
 		sigs[action.ID] = actionSig{signature: sig, args: args}
 	}
@@ -501,16 +508,31 @@ func collectCastParams(schema *metamodel.Schema, action metamodel.Action) []cast
 	return result
 }
 
+// actionTestArg returns a context-aware test value for a parameter.
+// For mint actions, "to" targets account1 (token holder).
+// For other actions, "to" targets account0 (recipient).
+func actionTestArg(actionID, name, typ string) string {
+	if typ == "address" && (name == "to" || name == "receiver") {
+		if solidity.IsPrivilegedAction(actionID) {
+			return anvilAccount1 // mint sends to account1 (token holder)
+		}
+		return anvilAccount0 // transfers go to account0
+	}
+	return defaultTestArg(name, typ)
+}
+
 func defaultTestArg(name, typ string) string {
 	switch typ {
 	case "address":
 		switch name {
-		case "to", "beneficiary", "receiver":
-			return anvilAccount1
+		case "to", "receiver":
+			return anvilAccount0 // recipient
+		case "beneficiary":
+			return anvilAccount1 // beneficiary is the token receiver
 		case "from", "owner":
-			return anvilAccount1
+			return anvilAccount1 // token holder
 		case "spender", "operator":
-			return anvilAccount0
+			return anvilAccount0 // spender/operator
 		default:
 			return anvilAccount1
 		}
@@ -627,15 +649,42 @@ func findCoveringSequence(model *petri.Model, initial *petri.State) []string {
 // castSendSoft sends a transaction, returning output on success or empty string on revert.
 func castSendSoft(t *testing.T, env *anvilEnv, privKey, sig string, args ...string) string {
 	t.Helper()
+	out, _ := castSendDebug(t, env, privKey, sig, args...)
+	return out
+}
+
+// castSendDebug sends a transaction and returns (output, revertReason).
+func castSendDebug(t *testing.T, env *anvilEnv, privKey, sig string, args ...string) (string, string) {
+	t.Helper()
 	cmdArgs := []string{"send", env.address, sig}
 	cmdArgs = append(cmdArgs, args...)
 	cmdArgs = append(cmdArgs, "--rpc-url", env.rpcURL, "--private-key", privKey)
 	cmd := exec.Command("cast", cmdArgs...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return ""
+		// Extract revert reason from output
+		outStr := string(out)
+		reason := "reverted"
+		if strings.Contains(outStr, "data: \"0x") {
+			// Try to extract revert string
+			idx := strings.Index(outStr, "data: \"0x")
+			if idx >= 0 {
+				end := strings.Index(outStr[idx:], "\")")
+				if end > 0 {
+					reason = outStr[idx : idx+end+2]
+				}
+			}
+		}
+		for _, line := range strings.Split(outStr, "\n") {
+			if strings.Contains(line, "revert") || strings.Contains(line, "Error") {
+				reason = strings.TrimSpace(line)
+				break
+			}
+		}
+		t.Logf("  cmd: cast send %s %s %s", env.address[:10]+"...", sig, strings.Join(args, " "))
+		return "", reason
 	}
-	return string(out)
+	return string(out), ""
 }
 
 // callGenAPI sends a POST to a generator endpoint and returns the JSON response fields.

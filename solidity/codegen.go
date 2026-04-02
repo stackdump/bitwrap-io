@@ -301,7 +301,25 @@ func (g *generator) generateStateVariables() string {
 		if state.Exported {
 			visibility = "public"
 		}
-		b.WriteString(fmt.Sprintf("    %s %s %s;\n", solType, visibility, state.ID))
+		// Initialize with Initial value if non-zero (for scalar types like counters)
+		initializer := ""
+		if state.Initial != nil && !isMapType(state.Type) {
+			switch v := state.Initial.(type) {
+			case int:
+				if v != 0 {
+					initializer = fmt.Sprintf(" = %d", v)
+				}
+			case int64:
+				if v != 0 {
+					initializer = fmt.Sprintf(" = %d", v)
+				}
+			case float64:
+				if v != 0 {
+					initializer = fmt.Sprintf(" = %d", int(v))
+				}
+			}
+		}
+		b.WriteString(fmt.Sprintf("    %s %s %s%s;\n", solType, visibility, state.ID, initializer))
 	}
 
 	b.WriteString("\n")
