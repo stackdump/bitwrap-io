@@ -286,54 +286,86 @@ func smokeTestContract(t *testing.T, env *anvilEnv, tmpl string) {
 	// Build function signatures from the schema for each action
 	sigs := buildFunctionSigs(schema)
 
-	// Execute the firing sequence on-chain with multi-actor support.
-	// Track which setup steps we've done so we can inject mint/approve before
-	// actions that consume tokens from non-owner accounts.
+	// Execute the firing sequence on-chain with multi-actor orchestration.
+	// The Petri net gives us the transition ordering; we inject setup steps
+	// (mint, approve) as needed for multi-actor token flows.
 	minted := false
 	approved := false
+	tokenIdCounter := 1
+	fired := 0
 
 	for _, tid := range sequence {
 		sig, ok := sigs[tid]
 		if !ok {
+			// Zero-param functions still have a signature like "createPoll()"
 			t.Logf("skip %s: no cast signature", tid)
 			continue
 		}
 
-		// For actions that consume tokens (transfer, burn, transferFrom, etc.),
-		// ensure we've minted tokens first
+		// Inject mint setup before token-consuming actions
 		if needsTokenSetup(tid) && !minted {
 			if mintSig, hasMint := sigs["mint"]; hasMint {
-				t.Log("setup: minting tokens for test accounts...")
-				castSendSoft(t, env, anvilPrivKey0, mintSig.signature, mintSig.args...)
-				minted = true
-			} else if mintSig, hasMint := sigs["mintBatch"]; hasMint {
+				t.Log("setup: minting tokens...")
 				castSendSoft(t, env, anvilPrivKey0, mintSig.signature, mintSig.args...)
 				minted = true
 			}
 		}
 
-		// For transferFrom, also need approve
+		// Inject approve before transferFrom (account1 approves account0 as spender)
 		if tid == "transferFrom" && !approved {
 			if appSig, hasApprove := sigs["approve"]; hasApprove {
-				t.Log("setup: approving spender...")
+				t.Log("setup: account1 approving account0 as spender...")
 				castSendSoft(t, env, anvilPrivKey1, appSig.signature, appSig.args...)
 				approved = true
 			}
 		}
 
-		// Determine caller: privileged actions use owner (account0), others use account1
-		privKey := anvilPrivKey1
-		if solidity.IsPrivilegedAction(tid) {
-			privKey = anvilPrivKey0
+		// For repeated mint calls (e.g., NFTs), use unique tokenId
+		args := sig.args
+		if tid == "mint" && minted {
+			tokenIdCounter++
+			args = replaceTokenIdArg(sig, tokenIdCounter)
 		}
 
-		out := castSendSoft(t, env, privKey, sig.signature, sig.args...)
+		// Determine caller based on action semantics
+		privKey := callerForAction(tid)
+
+		out := castSendSoft(t, env, privKey, sig.signature, args...)
 		if out != "" {
+			fired++
 			t.Logf("fired %s ✓", tid)
 		} else {
-			t.Logf("fired %s ✗ (reverted — may need prior state)", tid)
+			t.Logf("fired %s ✗ (reverted)", tid)
 		}
 	}
+	t.Logf("on-chain: %d/%d transitions fired successfully", fired, len(sequence))
+}
+
+// callerForAction returns the appropriate private key for calling an action.
+func callerForAction(actionID string) string {
+	// Owner actions: mint, createPoll, closePoll, harvest, create (vesting)
+	if solidity.IsPrivilegedAction(actionID) {
+		return anvilPrivKey0
+	}
+	// transferFrom is called by the spender (account0), not the token owner
+	if actionID == "transferFrom" {
+		return anvilPrivKey0
+	}
+	// Everything else: called by token holder (account1)
+	return anvilPrivKey1
+}
+
+// replaceTokenIdArg substitutes the tokenId in args with a new value.
+func replaceTokenIdArg(sig actionSig, newId int) []string {
+	args := make([]string, len(sig.args))
+	copy(args, sig.args)
+	for i, a := range args {
+		if a == "1" { // default tokenId
+			args[i] = fmt.Sprintf("%d", newId)
+			break
+		}
+	}
+	return args
 }
 
 func needsTokenSetup(actionID string) bool {
@@ -357,11 +389,7 @@ func buildFunctionSigs(schema *metamodel.Schema) map[string]actionSig {
 	sigs := make(map[string]actionSig)
 
 	for _, action := range schema.Actions {
-		// Collect the same params codegen uses
 		params := collectCastParams(schema, action)
-		if params == nil {
-			continue
-		}
 
 		// Build signature string and default args
 		var types []string
@@ -370,6 +398,7 @@ func buildFunctionSigs(schema *metamodel.Schema) map[string]actionSig {
 			types = append(types, p.solType)
 			args = append(args, p.testValue)
 		}
+		// Zero-param functions are valid (e.g., createPoll, closePoll)
 		sig := fmt.Sprintf("%s(%s)", action.ID, strings.Join(types, ","))
 		sigs[action.ID] = actionSig{signature: sig, args: args}
 	}
@@ -474,28 +503,32 @@ func collectCastParams(schema *metamodel.Schema, action metamodel.Action) []cast
 func defaultTestArg(name, typ string) string {
 	switch typ {
 	case "address":
-		if name == "to" || name == "beneficiary" || name == "receiver" {
+		switch name {
+		case "to", "beneficiary", "receiver":
 			return anvilAccount1
-		}
-		if name == "from" || name == "owner" {
+		case "from", "owner":
 			return anvilAccount1
-		}
-		if name == "spender" || name == "operator" {
+		case "spender", "operator":
 			return anvilAccount0
+		default:
+			return anvilAccount1
 		}
-		return anvilAccount1
 	case "uint256":
 		switch name {
-		case "amount", "assets", "shares", "total", "claimAmount", "nftAmount", "yieldAmount", "unvestedAmount":
+		case "amount", "assets", "shares", "nftAmount", "yieldAmount", "unvestedAmount", "claimAmount":
 			return "100"
+		case "total":
+			return "1000"
 		case "tokenId", "id":
 			return "1"
 		case "start":
-			return "0"
+			return "1"
 		case "cliff":
-			return "0"
+			return "5"
 		case "end":
 			return "100"
+		case "schedule":
+			return "0" // unused struct placeholder
 		default:
 			return "1"
 		}
