@@ -40,6 +40,14 @@ func (g *testGenerator) generate() string {
 		b.WriteString("        address mockVerifier = address(new MockVerifier());\n")
 		b.WriteString(fmt.Sprintf("        token = new %s(0, 10, mockVerifier);\n", contractName))
 		b.WriteString("    }\n\n")
+	} else if strings.HasPrefix(g.schema.Version, "ERC-05725:") {
+		b.WriteString("    function setUp() public {\n")
+		b.WriteString(fmt.Sprintf("        token = new %s();\n", contractName))
+		b.WriteString("        // Create a vesting NFT for alice: total=1000, start=1, cliff=5, end=100, revocable\n")
+		b.WriteString(fmt.Sprintf("        %s\n", g.vestingCreateSetupCall()))
+		b.WriteString("        // Advance past vesting end so claim/burn work\n")
+		b.WriteString("        token.advanceEpoch(200);\n")
+		b.WriteString("    }\n\n")
 	} else {
 		b.WriteString("    function setUp() public {\n")
 		b.WriteString(fmt.Sprintf("        token = new %s();\n", contractName))
@@ -112,6 +120,12 @@ func (g *testGenerator) generateActionTest(action metamodel.Action) string {
 		b.WriteString("        token.createPoll();\n")
 	}
 
+	// Vesting burn needs full claim first (claimed >= total)
+	if strings.HasPrefix(g.schema.Version, "ERC-05725:") && funcName == "burn" {
+		b.WriteString("        // Setup: claim all vested tokens first\n")
+		b.WriteString("        token.claim(100, 1000);\n")
+	}
+
 	// Vault deposit/mint/withdraw/redeem need external asset balances that can't be
 	// seeded from within the contract. Test that the guard reverts on zero-value call.
 	if g.isVaultAction(funcName) {
@@ -123,8 +137,9 @@ func (g *testGenerator) generateActionTest(action metamodel.Action) string {
 		return b.String()
 	}
 
-	// If action consumes tokens, mint first (as owner)
-	if g.needsMintSetup(funcName) && g.hasAction("mint") {
+	// If action consumes tokens, mint first (as owner).
+	// Skip for vesting schemas — setUp already calls create().
+	if g.needsMintSetup(funcName) && g.hasAction("mint") && !strings.HasPrefix(g.schema.Version, "ERC-05725:") {
 		b.WriteString("        // Setup: mint tokens first (as owner)\n")
 		b.WriteString(fmt.Sprintf("        %s\n", g.mintSetupCall()))
 		// For transferFrom, also need approve setup
@@ -135,8 +150,10 @@ func (g *testGenerator) generateActionTest(action metamodel.Action) string {
 		}
 	}
 
-	// Prank as non-owner for non-privileged actions
-	if !isPrivilegedAction(funcName) {
+	// Prank as non-owner for non-privileged actions.
+	// Skip prank for actions where the caller must be the deployer/creator
+	// (e.g., revoke checks creators[tokenId] == caller, and the test contract is the creator)
+	if !isPrivilegedAction(funcName) && !g.isCreatorGuarded(funcName) {
 		b.WriteString("        vm.prank(alice);\n")
 	}
 
@@ -332,7 +349,20 @@ func (g *testGenerator) testValueForParam(name, typ string) string {
 		}
 		return "alice"
 	case "uint256":
-		return "100"
+		switch name {
+		case "start":
+			return "1"
+		case "cliff":
+			return "5"
+		case "end":
+			return "200"
+		case "total":
+			return "1000"
+		case "schedule":
+			return "0"
+		default:
+			return "100"
+		}
 	case "bool":
 		return "true"
 	default:
@@ -474,6 +504,17 @@ func (g *testGenerator) needsMintSetup(funcName string) bool {
 	return false
 }
 
+// isCreatorGuarded returns true if the action's guard checks "creators[...] == caller",
+// meaning the deployer/test contract must be the caller (it's the NFT creator).
+func (g *testGenerator) isCreatorGuarded(funcName string) bool {
+	for _, action := range g.schema.Actions {
+		if action.ID == funcName && action.Guard != "" {
+			return strings.Contains(action.Guard, "creators[") && strings.Contains(action.Guard, "== caller")
+		}
+	}
+	return false
+}
+
 // isVaultAction returns true for vault actions that need external asset setup.
 func (g *testGenerator) isVaultAction(funcName string) bool {
 	if !strings.HasPrefix(g.schema.Version, "ERC-04626:") {
@@ -527,11 +568,11 @@ func (g *testGenerator) approveSetupCall() string {
 			case "owner", "from":
 				parts = append(parts, "alice")
 			case "spender", "operator", "to":
-				parts = append(parts, "charlie")
+				parts = append(parts, "alice") // must match transferFrom caller (vm.prank(alice))
 			case "amount":
 				parts = append(parts, "1000")
 			case "tokenId", "id":
-				parts = append(parts, "1")
+				parts = append(parts, "100") // matches default test param and mintSetupCall
 			case "isApproved", "approved":
 				parts = append(parts, "true")
 			default:
@@ -541,6 +582,41 @@ func (g *testGenerator) approveSetupCall() string {
 		return fmt.Sprintf("token.approve(%s);", strings.Join(parts, ", "))
 	}
 	return "token.approve(alice, charlie, 1000);"
+}
+
+// vestingCreateSetupCall generates a create() call for ERC5725 setUp.
+func (g *testGenerator) vestingCreateSetupCall() string {
+	for _, action := range g.schema.Actions {
+		if action.ID != "create" {
+			continue
+		}
+		params := g.collectFunctionParams(action)
+		var parts []string
+		for _, name := range sortedParams(params) {
+			switch name {
+			case "beneficiary":
+				parts = append(parts, "alice")
+			case "tokenId", "id":
+				parts = append(parts, "100")
+			case "total":
+				parts = append(parts, "1000")
+			case "start":
+				parts = append(parts, "1")
+			case "cliff":
+				parts = append(parts, "5")
+			case "end":
+				parts = append(parts, "100")
+			case "revocable":
+				parts = append(parts, "true")
+			case "schedule":
+				parts = append(parts, "0")
+			default:
+				parts = append(parts, g.testValueForParam(name, params[name]))
+			}
+		}
+		return fmt.Sprintf("token.create(%s);", strings.Join(parts, ", "))
+	}
+	return "// no create action found"
 }
 
 func (g *testGenerator) hasAction(id string) bool {
