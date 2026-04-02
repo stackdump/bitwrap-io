@@ -378,13 +378,13 @@ func (g *testGenerator) collectFunctionParams(action metamodel.Action) map[strin
 		delete(params, state.ID)
 	}
 
-	// Add default "amount" for arcs with empty Value where codegen defaults to "amount".
-	// Only applies when the state type stores uint256 values (not address, bool, or structs).
+	// Add default "amount" for arcs with empty Value on MAP states.
+	// Scalar states with empty Value use literal 1 (Petri net weight), not "amount".
 	needsAmount := false
 	for _, arc := range g.schema.InputArcs(action.ID) {
 		if arc.Value == "" {
 			state := g.schema.StateByID(arc.Source)
-			if state != nil && g.isNumericState(state) {
+			if state != nil && isMapType(state.Type) && g.isNumericState(state) {
 				needsAmount = true
 			}
 		}
@@ -392,7 +392,7 @@ func (g *testGenerator) collectFunctionParams(action metamodel.Action) map[strin
 	for _, arc := range g.schema.OutputArcs(action.ID) {
 		if arc.Value == "" {
 			state := g.schema.StateByID(arc.Target)
-			if state != nil && g.isNumericState(state) {
+			if state != nil && isMapType(state.Type) && g.isNumericState(state) {
 				needsAmount = true
 			}
 		}

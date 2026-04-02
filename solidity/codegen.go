@@ -756,7 +756,11 @@ func (g *generator) generateArcOperations(actionID string) (inputs []string, out
 		accessor := buildAccessor(arc.Source, arc.Keys)
 		value := arc.Value
 		if value == "" {
-			value = "amount"
+			if isMapType(state.Type) {
+				value = "amount" // map arcs default to "amount" parameter
+			} else {
+				value = "1" // scalar arcs default to weight 1 (Petri net semantics)
+			}
 		}
 
 		if isMapType(state.Type) {
@@ -784,7 +788,11 @@ func (g *generator) generateArcOperations(actionID string) (inputs []string, out
 		accessor := buildAccessor(arc.Target, arc.Keys)
 		value := arc.Value
 		if value == "" {
-			value = "amount"
+			if isMapType(state.Type) {
+				value = "amount"
+			} else {
+				value = "1"
+			}
 		}
 
 		if isMapType(state.Type) {

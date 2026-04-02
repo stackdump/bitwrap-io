@@ -448,11 +448,12 @@ func collectCastParams(schema *metamodel.Schema, action metamodel.Action) []cast
 		delete(params, state.ID)
 	}
 
-	// Default "amount" for arcs with empty Value on numeric states
+	// Default "amount" for arcs with empty Value on MAP states only.
+	// Scalar states use literal 1 (Petri net weight), not "amount" param.
 	for _, arc := range schema.InputArcs(action.ID) {
 		if arc.Value == "" {
 			st := schema.StateByID(arc.Source)
-			if st != nil && !strings.Contains(st.Type, "VestingSchedule") {
+			if st != nil && strings.HasPrefix(st.Type, "map[") && !strings.Contains(st.Type, "VestingSchedule") {
 				if !isMapOfNonNumeric(st.Type) {
 					params["amount"] = "uint256"
 				}
@@ -462,7 +463,7 @@ func collectCastParams(schema *metamodel.Schema, action metamodel.Action) []cast
 	for _, arc := range schema.OutputArcs(action.ID) {
 		if arc.Value == "" {
 			st := schema.StateByID(arc.Target)
-			if st != nil && !strings.Contains(st.Type, "VestingSchedule") {
+			if st != nil && strings.HasPrefix(st.Type, "map[") && !strings.Contains(st.Type, "VestingSchedule") {
 				if !isMapOfNonNumeric(st.Type) {
 					params["amount"] = "uint256"
 				}
