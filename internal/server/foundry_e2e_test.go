@@ -345,17 +345,19 @@ func smokeTestContract(t *testing.T, env *anvilEnv, tmpl string) {
 }
 
 // callerForAction returns the appropriate private key for calling an action.
+// After the dependency ordering: mint → approve → transfer → burn,
+// account0 is the contract owner AND the token recipient (after transferFrom).
 func callerForAction(actionID string) string {
-	// Owner actions: mint, createPoll, closePoll, harvest, create (vesting)
-	if solidity.IsPrivilegedAction(actionID) {
-		return anvilPrivKey0
+	switch {
+	case solidity.IsPrivilegedAction(actionID):
+		return anvilPrivKey0 // owner actions
+	case actionID == "transferFrom":
+		return anvilPrivKey0 // spender (approved by account1)
+	case actionID == "burn" || actionID == "burnBatch":
+		return anvilPrivKey0 // after transferFrom, account0 holds tokens
+	default:
+		return anvilPrivKey1 // token holder
 	}
-	// transferFrom is called by the spender (account0), not the token owner
-	if actionID == "transferFrom" {
-		return anvilPrivKey0
-	}
-	// Everything else: called by token holder (account1)
-	return anvilPrivKey1
 }
 
 // replaceTokenIdArg substitutes the tokenId in args with a new value.
@@ -494,10 +496,21 @@ func collectCastParams(schema *metamodel.Schema, action metamodel.Action) []cast
 		delete(params, state.ID)
 	}
 
+	// Build output target set for read-arc detection
+	outputTargets := make(map[string]bool)
+	for _, arc := range schema.OutputArcs(action.ID) {
+		key := arc.Target + "|" + strings.Join(arc.Keys, ",")
+		outputTargets[key] = true
+	}
+
 	// Default "amount" for arcs with empty Value on MAP states only.
-	// Scalar states use literal 1 (Petri net weight), not "amount" param.
+	// Skip read arcs and scalar states.
 	for _, arc := range schema.InputArcs(action.ID) {
 		if arc.Value == "" {
+			inputKey := arc.Source + "|" + strings.Join(arc.Keys, ",")
+			if outputTargets[inputKey] {
+				continue // read arc
+			}
 			st := schema.StateByID(arc.Source)
 			if st != nil && strings.HasPrefix(st.Type, "map[") && !strings.Contains(st.Type, "VestingSchedule") {
 				if !isMapOfNonNumeric(st.Type) {

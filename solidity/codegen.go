@@ -765,9 +765,25 @@ func (g *generator) generateArcOperations(actionID string) (inputs []string, out
 	inputArcs := g.schema.InputArcs(actionID)
 	outputArcs := g.schema.OutputArcs(actionID)
 
+	// Build a set of output arc targets to detect read arcs.
+	// An input arc from state X where there's also an output arc to state X
+	// with the same keys is a "read-then-write" pattern, not a consume.
+	outputTargets := make(map[string]bool) // "stateID|key1,key2" → true
+	for _, arc := range outputArcs {
+		key := arc.Target + "|" + strings.Join(arc.Keys, ",")
+		outputTargets[key] = true
+	}
+
 	for _, arc := range inputArcs {
 		state := g.schema.StateByID(arc.Source)
 		if state == nil {
+			continue
+		}
+
+		// Check if this is a read arc (same state+keys appears as output for this action)
+		inputKey := arc.Source + "|" + strings.Join(arc.Keys, ",")
+		if outputTargets[inputKey] && isMapType(state.Type) {
+			// Read arc — the output arc handles the write. Skip the input decrement.
 			continue
 		}
 

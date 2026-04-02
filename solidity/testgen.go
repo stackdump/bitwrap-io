@@ -378,11 +378,23 @@ func (g *testGenerator) collectFunctionParams(action metamodel.Action) map[strin
 		delete(params, state.ID)
 	}
 
+	// Build output target set for read-arc detection (same as codegen).
+	// Input arcs where the same state+keys also appears as output are reads, not consumes.
+	outputTargets := make(map[string]bool)
+	for _, arc := range g.schema.OutputArcs(action.ID) {
+		key := arc.Target + "|" + strings.Join(arc.Keys, ",")
+		outputTargets[key] = true
+	}
+
 	// Add default "amount" for arcs with empty Value on MAP states.
-	// Scalar states with empty Value use literal 1 (Petri net weight), not "amount".
+	// Skip read arcs (input+output to same state) and scalar states (use literal 1).
 	needsAmount := false
 	for _, arc := range g.schema.InputArcs(action.ID) {
 		if arc.Value == "" {
+			inputKey := arc.Source + "|" + strings.Join(arc.Keys, ",")
+			if outputTargets[inputKey] {
+				continue // read arc — codegen skips the decrement, no "amount" needed
+			}
 			state := g.schema.StateByID(arc.Source)
 			if state != nil && isMapType(state.Type) && g.isNumericState(state) {
 				needsAmount = true
