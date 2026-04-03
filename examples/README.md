@@ -39,7 +39,7 @@ register NEXT_ID uint256
 
 - `observable` makes the variable `public` in Solidity (auto-generates a getter)
 - Supported types: `uint256`, `address`, `bool`, `map[keyType]valueType`
-- Nested maps: `map[address]map[address]uint256` for allowance-style patterns
+- Nested maps: `map[address,address]uint256` (shorthand) or `map[address]map[address]uint256`
 
 ### Events
 

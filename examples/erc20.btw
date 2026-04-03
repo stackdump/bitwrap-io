@@ -4,7 +4,7 @@ schema ERC20 {
   asset "erc20"
 
   register BALANCES map[address]uint256 observable
-  register ALLOWANCES map[address]map[address]uint256 observable
+  register ALLOWANCES map[address,address]uint256 observable
   register TOTAL_SUPPLY uint256
 
   event TransferEvent {

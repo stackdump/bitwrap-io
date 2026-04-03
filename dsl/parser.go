@@ -216,12 +216,24 @@ func (p *Parser) parseTypeString() (string, error) {
 	}
 
 	// Check for map[...] type
+	// Supports: map[address]uint256, map[address]map[address]uint256,
+	// and shorthand: map[address,address]uint256 → map[address]map[address]uint256
 	if tok.Value == "map" && p.peek().Type == TokenLBracket {
-		result := "map"
 		p.advance() // [
+		// Collect comma-separated key types
+		var keyTypes []string
 		keyTok, err := p.expect(TokenIdent)
 		if err != nil {
 			return "", err
+		}
+		keyTypes = append(keyTypes, keyTok.Value)
+		for p.peek().Type == TokenComma {
+			p.advance() // ,
+			kt, err := p.expect(TokenIdent)
+			if err != nil {
+				return "", err
+			}
+			keyTypes = append(keyTypes, kt.Value)
 		}
 		if _, err := p.expect(TokenRBracket); err != nil {
 			return "", err
@@ -231,7 +243,11 @@ func (p *Parser) parseTypeString() (string, error) {
 		if err != nil {
 			return "", err
 		}
-		result += "[" + keyTok.Value + "]" + valType
+		// Build nested map type from right: map[k1,k2]v → map[k1]map[k2]v
+		result := valType
+		for i := len(keyTypes) - 1; i >= 0; i-- {
+			result = "map[" + keyTypes[i] + "]" + result
+		}
 		return result, nil
 	}
 

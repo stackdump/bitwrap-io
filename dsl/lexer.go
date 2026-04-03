@@ -44,6 +44,7 @@ const (
 	TokenArcIn     // -|
 	TokenArcOut    // |>
 	TokenAt        // @
+	TokenComma     // ,
 
 	// Operators
 	TokenGE   // >=
@@ -270,6 +271,9 @@ func (l *Lexer) next() (Token, error) {
 	case '@':
 		l.advance()
 		return Token{Type: TokenAt, Value: "@", Line: line}, nil
+	case ',':
+		l.advance()
+		return Token{Type: TokenComma, Value: ",", Line: line}, nil
 	case '>':
 		l.advance()
 		return Token{Type: TokenGT, Value: ">", Line: line}, nil

@@ -502,3 +502,27 @@ func TestNestedMapArcs(t *testing.T) {
 		t.Error("expected a 2-key ALLOWANCES arc in transferFrom inputs")
 	}
 }
+
+func TestMapCommaShorthand(t *testing.T) {
+	src := `
+schema Test {
+  version "1.0.0"
+  register ALLOWANCES map[address,address]uint256 observable
+  register TRIPLE map[uint256,address,uint256]bool
+}
+`
+	ast, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+
+	// map[address,address]uint256 → map[address]map[address]uint256
+	if ast.Registers[0].Type != "map[address]map[address]uint256" {
+		t.Errorf("expected map[address]map[address]uint256, got %s", ast.Registers[0].Type)
+	}
+
+	// map[uint256,address,uint256]bool → map[uint256]map[address]map[uint256]bool
+	if ast.Registers[1].Type != "map[uint256]map[address]map[uint256]bool" {
+		t.Errorf("expected map[uint256]map[address]map[uint256]bool, got %s", ast.Registers[1].Type)
+	}
+}
