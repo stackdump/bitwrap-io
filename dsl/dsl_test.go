@@ -1,6 +1,7 @@
 package dsl
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -524,5 +525,93 @@ schema Test {
 	// map[uint256,address,uint256]bool → map[uint256]map[address]map[uint256]bool
 	if ast.Registers[1].Type != "map[uint256]map[address]map[uint256]bool" {
 		t.Errorf("expected map[uint256]map[address]map[uint256]bool, got %s", ast.Registers[1].Type)
+	}
+}
+
+func TestValidation(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want string // substring of expected error
+	}{
+		{
+			name: "duplicate register",
+			src:  `schema Foo { version "1.0" register X uint256 register X uint256 }`,
+			want: `duplicate name "X"`,
+		},
+		{
+			name: "reserved schema name",
+			src:  `schema Test { version "1.0" }`,
+			want: `schema name "Test" conflicts with forge-std class`,
+		},
+		{
+			name: "reserved function name",
+			src:  `schema Foo { version "1.0" register X uint256 fn(msg) { X -|1|> msg } }`,
+			want: `function name "msg" conflicts with Solidity built-in`,
+		},
+		{
+			name: "scalar indexed",
+			src:  `schema Foo { version "1.0" register X uint256 fn(f) { var k address X[k] -|1|> f } }`,
+			want: "register X is uint256 (scalar), cannot index",
+		},
+		{
+			name: "unknown register in arc",
+			src:  `schema Foo { version "1.0" fn(f) { var x amount NOPE -|x|> f } }`,
+			want: `unknown register "NOPE"`,
+		},
+		{
+			name: "unknown identifier in guard",
+			src:  `schema Foo { version "1.0" register X uint256 fn(f) { var amount amount require(NOPE >= amount) f -|amount|> X } }`,
+			want: `guard references unknown identifier "NOPE"`,
+		},
+		{
+			name: "undeclared event",
+			src:  `schema Foo { version "1.0" register X uint256 fn(f) { var amount amount @event Nope f -|amount|> X } }`,
+			want: `undeclared event "Nope"`,
+		},
+		{
+			name: "unknown type",
+			src:  `schema Foo { version "1.0" register X maps[address]uint256 }`,
+			want: `unknown type "maps"`,
+		},
+		{
+			name: "map key depth mismatch",
+			src:  `schema Foo { version "1.0" register X map[address,address]uint256 fn(f) { var k address X[k] -|1|> f } }`,
+			want: "needs 2 index key(s)",
+		},
+		{
+			name: "valid schema passes",
+			src: `schema Foo { version "1.0"
+				register X map[address]uint256 observable
+				event E { to: address indexed amount: uint256 }
+				fn(inc) { var to address var amount amount @event E inc -|amount|> X[to] }
+			}`,
+			want: "", // no error
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ast, err := Parse(tc.src)
+			if err != nil {
+				if tc.want != "" && strings.Contains(err.Error(), tc.want) {
+					return // parse error matches expected
+				}
+				t.Fatalf("unexpected parse error: %v", err)
+			}
+			_, err = Build(ast)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("expected no error, got: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected error containing %q, got: %v", tc.want, err)
+			}
+		})
 	}
 }

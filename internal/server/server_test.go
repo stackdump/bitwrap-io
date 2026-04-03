@@ -278,7 +278,7 @@ func TestPostSVG(t *testing.T) {
 
 func TestCompile(t *testing.T) {
 	srv := testServer(t)
-	btw := `schema Test {
+	btw := `schema Counter {
   version "1.0"
   register balance uint256 observable
   fn(inc) {
@@ -295,7 +295,7 @@ func TestCompile(t *testing.T) {
 	}
 	var resp map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["name"] != "Test" {
-		t.Fatalf("expected name=Test, got %v", resp["name"])
+	if resp["name"] != "Counter" {
+		t.Fatalf("expected name=Counter, got %v", resp["name"])
 	}
 }

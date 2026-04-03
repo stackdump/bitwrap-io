@@ -218,6 +218,9 @@ func (p *Parser) parseTypeString() (string, error) {
 	// Check for map[...] type
 	// Supports: map[address]uint256, map[address]map[address]uint256,
 	// and shorthand: map[address,address]uint256 → map[address]map[address]uint256
+	if tok.Value != "map" && !isKnownType(tok.Value) {
+		return "", fmt.Errorf("line %d: unknown type %q (expected uint256, address, bool, or map[...])", tok.Line, tok.Value)
+	}
 	if tok.Value == "map" && p.peek().Type == TokenLBracket {
 		p.advance() // [
 		// Collect comma-separated key types
@@ -491,4 +494,15 @@ func (p *Parser) parsePlaceRef() (string, []string, error) {
 	}
 
 	return nameTok.Value, indices, nil
+}
+
+// isKnownType returns true for valid Solidity-compatible type names.
+func isKnownType(t string) bool {
+	known := map[string]bool{
+		"uint256": true, "uint128": true, "uint64": true, "uint32": true, "uint16": true, "uint8": true,
+		"int256": true, "int128": true, "int64": true, "int32": true, "int16": true, "int8": true,
+		"address": true, "bool": true, "bytes32": true, "bytes": true, "string": true,
+		"amount": true, // DSL shorthand for uint256
+	}
+	return known[t]
 }
