@@ -97,16 +97,16 @@ func buildArc(fnName string, a Arc) (metamodel.Arc, error) {
 		Value:  a.Weight,
 	}
 
-	// Determine which side has the index (the place side)
+	// Determine which side has the indices (the place side)
 	if a.Source == fnName {
-		// output arc: fnName -|w|> PLACE[idx]
-		if a.TargetIndex != "" {
-			arc.Keys = []string{a.TargetIndex}
+		// output arc: fnName -|w|> PLACE[idx1][idx2]
+		if len(a.TargetIndices) > 0 {
+			arc.Keys = a.TargetIndices
 		}
 	} else if a.Target == fnName {
-		// input arc: PLACE[idx] -|w|> fnName
-		if a.SourceIndex != "" {
-			arc.Keys = []string{a.SourceIndex}
+		// input arc: PLACE[idx1][idx2] -|w|> fnName
+		if len(a.SourceIndices) > 0 {
+			arc.Keys = a.SourceIndices
 		}
 	} else {
 		return metamodel.Arc{}, fmt.Errorf("arc %s -|%s|> %s does not reference function %s",

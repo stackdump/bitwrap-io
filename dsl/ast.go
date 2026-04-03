@@ -54,11 +54,11 @@ type Var struct {
 // When the function name is the source, it is an output arc (function produces tokens).
 // When the function name is the target, it is an input arc (function consumes tokens).
 type Arc struct {
-	Source      string // place or function name
-	SourceIndex string // optional index variable, e.g. "from" in ASSETS.AVAILABLE[from]
-	Target      string // place or function name
-	TargetIndex string // optional index variable
-	Weight      string // weight expression, e.g. "amount"
+	Source        string   // place or function name
+	SourceIndices []string // index variables, e.g. ["owner","spender"] in ALLOWANCES[owner][spender]
+	Target        string   // place or function name
+	TargetIndices []string // index variables
+	Weight        string   // weight expression, e.g. "amount"
 }
 
 // InitialValue assigns an initial value to a place.

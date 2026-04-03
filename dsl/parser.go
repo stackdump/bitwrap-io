@@ -446,33 +446,33 @@ func (p *Parser) parseArc() (Arc, error) {
 	}
 
 	return Arc{
-		Source:      source,
-		SourceIndex: sourceIdx,
-		Target:      target,
-		TargetIndex: targetIdx,
-		Weight:      weightTok.Value,
+		Source:        source,
+		SourceIndices: sourceIdx,
+		Target:        target,
+		TargetIndices: targetIdx,
+		Weight:        weightTok.Value,
 	}, nil
 }
 
-// parsePlaceRef parses NAME or NAME[index].
-func (p *Parser) parsePlaceRef() (string, string, error) {
+// parsePlaceRef parses NAME, NAME[index], or NAME[idx1][idx2] for nested maps.
+func (p *Parser) parsePlaceRef() (string, []string, error) {
 	nameTok, err := p.expect(TokenIdent)
 	if err != nil {
-		return "", "", err
+		return "", nil, err
 	}
 
-	idx := ""
-	if p.peek().Type == TokenLBracket {
+	var indices []string
+	for p.peek().Type == TokenLBracket {
 		p.advance() // [
 		idxTok, err := p.expect(TokenIdent)
 		if err != nil {
-			return "", "", err
+			return "", nil, err
 		}
 		if _, err := p.expect(TokenRBracket); err != nil {
-			return "", "", err
+			return "", nil, err
 		}
-		idx = idxTok.Value
+		indices = append(indices, idxTok.Value)
 	}
 
-	return nameTok.Value, idx, nil
+	return nameTok.Value, indices, nil
 }

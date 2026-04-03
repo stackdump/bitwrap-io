@@ -4,11 +4,18 @@ schema ERC20 {
   asset "erc20"
 
   register BALANCES map[address]uint256 observable
+  register ALLOWANCES map[address]map[address]uint256 observable
   register TOTAL_SUPPLY uint256
 
   event TransferEvent {
     from: address indexed
     to: address indexed
+    amount: uint256
+  }
+
+  event ApproveEvent {
+    owner: address indexed
+    spender: address
     amount: uint256
   }
 
@@ -32,6 +39,29 @@ schema ERC20 {
 
     BALANCES[from] -|amount|> transfer
     transfer -|amount|> BALANCES[to]
+  }
+
+  fn(approve) {
+    var owner address
+    var spender address
+    var amount amount
+
+    @event ApproveEvent
+
+    approve -|amount|> ALLOWANCES[owner][spender]
+  }
+
+  fn(transferFrom) {
+    var from address
+    var to address
+    var amount amount
+
+    require(BALANCES[from] >= amount && ALLOWANCES[from][caller] >= amount)
+    @event TransferEvent
+
+    BALANCES[from] -|amount|> transferFrom
+    ALLOWANCES[from][caller] -|amount|> transferFrom
+    transferFrom -|amount|> BALANCES[to]
   }
 
   fn(mint) {

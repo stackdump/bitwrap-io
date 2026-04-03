@@ -168,8 +168,8 @@ func TestParse(t *testing.T) {
 
 	// First arc: ASSETS.AVAILABLE[from] -|amount|> transfer (input)
 	arc0 := transfer.Arcs[0]
-	if arc0.Source != "ASSETS.AVAILABLE" || arc0.SourceIndex != "from" {
-		t.Errorf("arc0 source: expected ASSETS.AVAILABLE[from], got %s[%s]", arc0.Source, arc0.SourceIndex)
+	if arc0.Source != "ASSETS.AVAILABLE" || len(arc0.SourceIndices) != 1 || arc0.SourceIndices[0] != "from" {
+		t.Errorf("arc0 source: expected ASSETS.AVAILABLE[from], got %s%v", arc0.Source, arc0.SourceIndices)
 	}
 	if arc0.Target != "transfer" {
 		t.Errorf("arc0 target: expected transfer, got %s", arc0.Target)
@@ -183,8 +183,8 @@ func TestParse(t *testing.T) {
 	if arc1.Source != "transfer" {
 		t.Errorf("arc1 source: expected transfer, got %s", arc1.Source)
 	}
-	if arc1.Target != "ASSETS.AVAILABLE" || arc1.TargetIndex != "to" {
-		t.Errorf("arc1 target: expected ASSETS.AVAILABLE[to], got %s[%s]", arc1.Target, arc1.TargetIndex)
+	if arc1.Target != "ASSETS.AVAILABLE" || len(arc1.TargetIndices) != 1 || arc1.TargetIndices[0] != "to" {
+		t.Errorf("arc1 target: expected ASSETS.AVAILABLE[to], got %s%v", arc1.Target, arc1.TargetIndices)
 	}
 
 	// mint function has 3 output arcs, 0 input arcs
@@ -394,5 +394,111 @@ func TestLexerComment(t *testing.T) {
 	}
 	if schema.Version != "1.0.0" {
 		t.Errorf("expected version 1.0.0, got %s", schema.Version)
+	}
+}
+
+const nestedMapSource = `
+schema ERC20WithApprove {
+  version "1.0.0"
+
+  register BALANCES map[address]uint256 observable
+  register ALLOWANCES map[address]map[address]uint256 observable
+
+  fn(approve) {
+    var owner address
+    var spender address
+    var amount amount
+
+    ALLOWANCES[owner][spender] -|amount|> approve
+    approve -|amount|> ALLOWANCES[owner][spender]
+  }
+
+  fn(transferFrom) {
+    var from address
+    var to address
+    var amount amount
+
+    require(BALANCES[from] >= amount && ALLOWANCES[from][to] >= amount)
+
+    BALANCES[from] -|amount|> transferFrom
+    ALLOWANCES[from][to] -|amount|> transferFrom
+    transferFrom -|amount|> BALANCES[to]
+  }
+}
+`
+
+func TestNestedMapArcs(t *testing.T) {
+	ast, err := Parse(nestedMapSource)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+
+	// Check nested map register type
+	if ast.Registers[1].Type != "map[address]map[address]uint256" {
+		t.Errorf("expected map[address]map[address]uint256, got %s", ast.Registers[1].Type)
+	}
+
+	// Check approve arcs have two indices
+	approve := ast.Functions[0]
+	if approve.Name != "approve" {
+		t.Fatalf("expected approve, got %s", approve.Name)
+	}
+	if len(approve.Arcs) != 2 {
+		t.Fatalf("expected 2 arcs, got %d", len(approve.Arcs))
+	}
+
+	// Input arc: ALLOWANCES[owner][spender] -|amount|> approve
+	arc0 := approve.Arcs[0]
+	if arc0.Source != "ALLOWANCES" {
+		t.Errorf("arc0 source: expected ALLOWANCES, got %s", arc0.Source)
+	}
+	if len(arc0.SourceIndices) != 2 || arc0.SourceIndices[0] != "owner" || arc0.SourceIndices[1] != "spender" {
+		t.Errorf("arc0 source indices: expected [owner spender], got %v", arc0.SourceIndices)
+	}
+
+	// Output arc: approve -|amount|> ALLOWANCES[owner][spender]
+	arc1 := approve.Arcs[1]
+	if arc1.Target != "ALLOWANCES" {
+		t.Errorf("arc1 target: expected ALLOWANCES, got %s", arc1.Target)
+	}
+	if len(arc1.TargetIndices) != 2 || arc1.TargetIndices[0] != "owner" || arc1.TargetIndices[1] != "spender" {
+		t.Errorf("arc1 target indices: expected [owner spender], got %v", arc1.TargetIndices)
+	}
+
+	// Build and verify schema arcs get multi-key
+	schema, err := Build(ast)
+	if err != nil {
+		t.Fatalf("Build error: %v", err)
+	}
+
+	approveArcs := schema.InputArcs("approve")
+	if len(approveArcs) != 1 {
+		t.Fatalf("expected 1 input arc for approve, got %d", len(approveArcs))
+	}
+	if len(approveArcs[0].Keys) != 2 || approveArcs[0].Keys[0] != "owner" || approveArcs[0].Keys[1] != "spender" {
+		t.Errorf("approve input arc keys: expected [owner spender], got %v", approveArcs[0].Keys)
+	}
+
+	outputArcs := schema.OutputArcs("approve")
+	if len(outputArcs) != 1 {
+		t.Fatalf("expected 1 output arc for approve, got %d", len(outputArcs))
+	}
+	if len(outputArcs[0].Keys) != 2 {
+		t.Errorf("approve output arc keys: expected 2, got %d", len(outputArcs[0].Keys))
+	}
+
+	// transferFrom has a 2-key input arc for ALLOWANCES
+	tfArcs := schema.InputArcs("transferFrom")
+	foundNested := false
+	for _, a := range tfArcs {
+		if a.Source == "ALLOWANCES" && len(a.Keys) == 2 {
+			foundNested = true
+			if a.Keys[0] != "from" || a.Keys[1] != "to" {
+				t.Errorf("transferFrom ALLOWANCES arc keys: expected [from to], got %v", a.Keys)
+			}
+		}
+	}
+	if !foundNested {
+		t.Error("expected a 2-key ALLOWANCES arc in transferFrom inputs")
 	}
 }
