@@ -1,0 +1,58 @@
+schema ERC20 {
+  version "1.0.0"
+  domain "custody"
+  asset "erc20"
+
+  register BALANCES map[address]uint256 observable
+  register TOTAL_SUPPLY uint256
+
+  event TransferEvent {
+    from: address indexed
+    to: address indexed
+    amount: uint256
+  }
+
+  event MintEvent {
+    to: address indexed
+    amount: uint256
+  }
+
+  event BurnEvent {
+    from: address indexed
+    amount: uint256
+  }
+
+  fn(transfer) {
+    var from address
+    var to address
+    var amount amount
+
+    require(BALANCES[from] >= amount && to != address(0))
+    @event TransferEvent
+
+    BALANCES[from] -|amount|> transfer
+    transfer -|amount|> BALANCES[to]
+  }
+
+  fn(mint) {
+    var to address
+    var amount amount
+
+    require(to != address(0))
+    @event MintEvent
+
+    mint -|amount|> BALANCES[to]
+    mint -|amount|> TOTAL_SUPPLY
+  }
+
+  fn(burn) {
+    var from address
+    var amount amount
+
+    require(BALANCES[from] >= amount)
+    @event BurnEvent
+
+    BALANCES[from] -|amount|> burn
+    TOTAL_SUPPLY -|amount|> burn
+  }
+}

@@ -1,4 +1,4 @@
-.PHONY: build run test test-e2e test-playwright clean wasm
+.PHONY: build run test test-e2e test-playwright validate clean wasm
 
 PORT ?= 8088
 
@@ -17,6 +17,9 @@ test:
 
 test-e2e:
 	go test -tags e2e -timeout 600s -v ./internal/server/ -run TestFoundryE2E
+
+validate: build
+	./bitwrap -validate $(BTW)
 
 test-playwright:
 	cd e2e && npm install --silent && npx playwright install chromium 2>/dev/null; cd e2e && npx playwright test

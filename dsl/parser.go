@@ -207,7 +207,8 @@ func (p *Parser) parseRegister() (Register, error) {
 	}, nil
 }
 
-// parseTypeString reads a type like "uint256" or "map[address]uint256".
+// parseTypeString reads a type like "uint256", "map[address]uint256",
+// or nested maps like "map[address]map[address]uint256".
 func (p *Parser) parseTypeString() (string, error) {
 	tok := p.advance()
 	if tok.Type != TokenIdent {
@@ -225,11 +226,12 @@ func (p *Parser) parseTypeString() (string, error) {
 		if _, err := p.expect(TokenRBracket); err != nil {
 			return "", err
 		}
-		valTok, err := p.expect(TokenIdent)
+		// Value type can itself be a map (recursive) or a simple ident
+		valType, err := p.parseTypeString()
 		if err != nil {
 			return "", err
 		}
-		result += "[" + keyTok.Value + "]" + valTok.Value
+		result += "[" + keyTok.Value + "]" + valType
 		return result, nil
 	}
 
