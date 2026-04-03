@@ -1,6 +1,9 @@
 package server
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/stackdump/bitwrap-io/dsl"
@@ -154,6 +157,118 @@ schema Counter {
 			t.Errorf("after decrement(2): COUNT=%d, want 3", rt.Tokens("COUNT"))
 		}
 	})
+
+	t.Run("allowances", func(t *testing.T) {
+		src := `
+schema ERC20Approve {
+  version "1.0.0"
+  register BALANCES map[address]uint256
+  register ALLOWANCES map[address]map[address]uint256
+
+  fn(mint) {
+    var to address
+    var amount amount
+    mint -|amount|> BALANCES[to]
+  }
+
+  fn(approve) {
+    var owner address
+    var spender address
+    var amount amount
+    approve -|amount|> ALLOWANCES[owner][spender]
+  }
+
+  fn(transferFrom) {
+    var from address
+    var spender address
+    var to address
+    var amount amount
+    BALANCES[from] -|amount|> transferFrom
+    ALLOWANCES[from][spender] -|amount|> transferFrom
+    transferFrom -|amount|> BALANCES[to]
+  }
+}
+`
+		ast, err := dsl.Parse(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		schema, err := dsl.Build(ast)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		rt := metamodel.NewRuntime(schema)
+		rt.CheckConstraints = false
+
+		// Mint 1000 to Alice
+		err = rt.ExecuteWithBindings("mint", metamodel.Bindings{"to": "Alice", "amount": int64(1000)})
+		if err != nil {
+			t.Fatalf("mint: %v", err)
+		}
+
+		// Alice approves Bob for 500
+		err = rt.ExecuteWithBindings("approve", metamodel.Bindings{"owner": "Alice", "spender": "Bob", "amount": int64(500)})
+		if err != nil {
+			t.Fatalf("approve: %v", err)
+		}
+		allowances := rt.DataMap("ALLOWANCES")
+		nested, ok := allowances["Alice"].(map[string]any)
+		if !ok {
+			t.Fatal("ALLOWANCES[Alice] is not a map")
+		}
+		if mapVal(nested, "Bob") != 500 {
+			t.Errorf("after approve: ALLOWANCES[Alice][Bob]=%v, want 500", nested["Bob"])
+		}
+
+		// Bob transfers 200 from Alice to Charlie
+		err = rt.ExecuteWithBindings("transferFrom", metamodel.Bindings{
+			"from": "Alice", "spender": "Bob", "to": "Charlie", "amount": int64(200),
+		})
+		if err != nil {
+			t.Fatalf("transferFrom: %v", err)
+		}
+
+		balances := rt.DataMap("BALANCES")
+		if mapVal(balances, "Alice") != 800 {
+			t.Errorf("after transferFrom: BALANCES[Alice]=%v, want 800", balances["Alice"])
+		}
+		if mapVal(balances, "Charlie") != 200 {
+			t.Errorf("after transferFrom: BALANCES[Charlie]=%v, want 200", balances["Charlie"])
+		}
+		allowances = rt.DataMap("ALLOWANCES")
+		nested = allowances["Alice"].(map[string]any)
+		if mapVal(nested, "Bob") != 300 {
+			t.Errorf("after transferFrom: ALLOWANCES[Alice][Bob]=%v, want 300", nested["Bob"])
+		}
+	})
+
+	// Verify JS parity by running the JS test
+	t.Run("js_parity", func(t *testing.T) {
+		cmd := exec.Command("node", "--experimental-vm-modules", "public/parity_test.mjs")
+		cmd.Dir = findProjectRoot(t)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("JS parity test failed:\n%s\n%v", out, err)
+		}
+		t.Logf("%s", out)
+	})
+}
+
+func findProjectRoot(t *testing.T) string {
+	t.Helper()
+	// Walk up from the test binary's working directory to find go.mod
+	dir, _ := os.Getwd()
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("could not find project root")
+		}
+		dir = parent
+	}
 }
 
 func mapVal(m map[string]any, key string) int64 {

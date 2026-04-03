@@ -113,6 +113,10 @@ jobs:
           });
           "
 
+      - name: Petri net execution parity
+        run: |
+          node --experimental-vm-modules public/parity_test.mjs
+
       - name: JS syntax check
         run: |
           for f in public/mimc.js public/merkle.js public/witness-builder.js public/safemath.js public/model.js public/state.js public/bridge.js public/bitwrap.js; do
