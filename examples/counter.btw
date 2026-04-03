@@ -1,0 +1,16 @@
+schema Counter {
+  version "1.0.0"
+
+  register COUNT uint256 observable
+
+  fn(increment) {
+    var amount amount
+    increment -|amount|> COUNT
+  }
+
+  fn(decrement) {
+    var amount amount
+    require(COUNT >= amount)
+    COUNT -|amount|> decrement
+  }
+}

@@ -1,0 +1,57 @@
+schema Escrow {
+  version "1.0.0"
+  domain "payments"
+
+  register DEPOSITS map[address]uint256 observable
+  register LOCKED map[address]uint256
+  register TOTAL_LOCKED uint256
+
+  event DepositEvent {
+    from: address indexed
+    amount: uint256
+  }
+
+  event LockEvent {
+    from: address indexed
+    amount: uint256
+  }
+
+  event ReleaseEvent {
+    to: address indexed
+    amount: uint256
+  }
+
+  fn(deposit) {
+    var from address
+    var amount amount
+
+    require(amount > 0)
+    @event DepositEvent
+
+    deposit -|amount|> DEPOSITS[from]
+  }
+
+  fn(lock) {
+    var from address
+    var amount amount
+
+    require(DEPOSITS[from] >= amount)
+    @event LockEvent
+
+    DEPOSITS[from] -|amount|> lock
+    lock -|amount|> LOCKED[from]
+    lock -|amount|> TOTAL_LOCKED
+  }
+
+  fn(release) {
+    var to address
+    var amount amount
+
+    require(LOCKED[to] >= amount)
+    @event ReleaseEvent
+
+    LOCKED[to] -|amount|> release
+    TOTAL_LOCKED -|amount|> release
+    release -|amount|> DEPOSITS[to]
+  }
+}

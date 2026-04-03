@@ -1,0 +1,43 @@
+schema NFT {
+  version "1.0.0"
+  domain "collectibles"
+
+  register OWNERS map[uint256]address observable
+  register BALANCES map[address]uint256
+
+  event MintEvent {
+    to: address indexed
+    tokenId: uint256
+  }
+
+  event TransferEvent {
+    from: address indexed
+    to: address indexed
+    tokenId: uint256
+  }
+
+  fn(mint) {
+    var to address
+    var tokenId uint256
+
+    require(OWNERS[tokenId] == address(0) && to != address(0))
+    @event MintEvent
+
+    mint -|to|> OWNERS[tokenId]
+    mint -|1|> BALANCES[to]
+  }
+
+  fn(transfer) {
+    var from address
+    var to address
+    var tokenId uint256
+
+    require(OWNERS[tokenId] == from && to != address(0))
+    @event TransferEvent
+
+    OWNERS[tokenId] -|from|> transfer
+    transfer -|to|> OWNERS[tokenId]
+    BALANCES[from] -|1|> transfer
+    transfer -|1|> BALANCES[to]
+  }
+}

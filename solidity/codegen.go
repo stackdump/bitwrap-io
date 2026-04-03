@@ -10,13 +10,22 @@ import (
 )
 
 // Generate produces a Solidity contract from a metamodel schema.
+// Includes test helpers (unsafeBecomeOwner, etc.) for local development.
 func Generate(schema *metamodel.Schema) string {
-	g := &generator{schema: schema}
+	g := &generator{schema: schema, includeTestHelpers: true}
+	return g.generate()
+}
+
+// GenerateProduction produces a Solidity contract without test backdoors.
+// Use this for production deployments.
+func GenerateProduction(schema *metamodel.Schema) string {
+	g := &generator{schema: schema, includeTestHelpers: false}
 	return g.generate()
 }
 
 type generator struct {
-	schema *metamodel.Schema
+	schema             *metamodel.Schema
+	includeTestHelpers bool
 }
 
 func (g *generator) generate() string {
@@ -223,34 +232,29 @@ func (g *generator) generateAdminFunctions() string {
 	b.WriteString("        contractOwner = address(0);\n")
 	b.WriteString("    }\n\n")
 
-	// Testing helpers
-	b.WriteString("    // ============ Testing Helpers ============\n")
-	b.WriteString("    // WARNING: These functions are for local development/testing only.\n")
-	b.WriteString("    // NEVER deploy a contract with these functions to mainnet or any network with real value.\n\n")
-	b.WriteString("    address internal originalOwner;\n")
-	b.WriteString("    address internal previousOwner;\n\n")
-	b.WriteString("    /// @notice Allows any caller to become the contract owner (TESTING ONLY)\n")
-	b.WriteString("    /// @dev This is a backdoor for local Anvil testing - DO NOT USE IN PRODUCTION\n")
-	b.WriteString("    function unsafeBecomeOwner() external {\n")
-	b.WriteString("        if (originalOwner == address(0)) {\n")
-	b.WriteString("            originalOwner = contractOwner;\n")
-	b.WriteString("        }\n")
-	b.WriteString("        previousOwner = contractOwner;\n")
-	b.WriteString("        emit OwnershipTransferred(contractOwner, msg.sender);\n")
-	b.WriteString("        contractOwner = msg.sender;\n")
-	b.WriteString("    }\n\n")
-	b.WriteString("    /// @notice Restores the previous owner (TESTING ONLY)\n")
-	b.WriteString("    /// @dev This is a backdoor for local Anvil testing - DO NOT USE IN PRODUCTION\n")
-	b.WriteString("    function unsafeRestoreOwner() external {\n")
-	b.WriteString("        emit OwnershipTransferred(contractOwner, previousOwner);\n")
-	b.WriteString("        contractOwner = previousOwner;\n")
-	b.WriteString("    }\n\n")
-	b.WriteString("    /// @notice Restores the original owner from deployment (TESTING ONLY)\n")
-	b.WriteString("    /// @dev This is a backdoor for local Anvil testing - DO NOT USE IN PRODUCTION\n")
-	b.WriteString("    function unsafeRestoreOriginalOwner() external {\n")
-	b.WriteString("        emit OwnershipTransferred(contractOwner, originalOwner);\n")
-	b.WriteString("        contractOwner = originalOwner;\n")
-	b.WriteString("    }\n\n")
+	if g.includeTestHelpers {
+		b.WriteString("    // ============ Testing Helpers ============\n")
+		b.WriteString("    // WARNING: Remove these before deploying to mainnet.\n\n")
+		b.WriteString("    address internal originalOwner;\n")
+		b.WriteString("    address internal previousOwner;\n\n")
+		b.WriteString("    /// @notice Allows any caller to become the contract owner (TESTING ONLY)\n")
+		b.WriteString("    function unsafeBecomeOwner() external {\n")
+		b.WriteString("        if (originalOwner == address(0)) {\n")
+		b.WriteString("            originalOwner = contractOwner;\n")
+		b.WriteString("        }\n")
+		b.WriteString("        previousOwner = contractOwner;\n")
+		b.WriteString("        emit OwnershipTransferred(contractOwner, msg.sender);\n")
+		b.WriteString("        contractOwner = msg.sender;\n")
+		b.WriteString("    }\n\n")
+		b.WriteString("    function unsafeRestoreOwner() external {\n")
+		b.WriteString("        emit OwnershipTransferred(contractOwner, previousOwner);\n")
+		b.WriteString("        contractOwner = previousOwner;\n")
+		b.WriteString("    }\n\n")
+		b.WriteString("    function unsafeRestoreOriginalOwner() external {\n")
+		b.WriteString("        emit OwnershipTransferred(contractOwner, originalOwner);\n")
+		b.WriteString("        contractOwner = originalOwner;\n")
+		b.WriteString("    }\n\n")
+	}
 
 	return b.String()
 }

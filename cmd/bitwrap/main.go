@@ -87,48 +87,46 @@ func main() {
 func runValidate(path string) int {
 	src, err := os.ReadFile(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "FAIL: read %s: %v\n", path, err)
+		fmt.Fprintf(os.Stderr, "FAIL read %s: %v\n", path, err)
 		return 1
 	}
 
 	// Step 1: Parse DSL
-	fmt.Printf("● parse %s\n", path)
+	fmt.Printf("  parse    %s\n", path)
 	ast, err := dsl.Parse(string(src))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "FAIL: parse: %v\n", err)
+		fmt.Fprintf(os.Stderr, "FAIL parse: %v\n", err)
 		return 1
 	}
 
 	// Step 2: Build metamodel schema
-	fmt.Printf("● build schema: %s\n", ast.Name)
 	schema, err := dsl.Build(ast)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "FAIL: build: %v\n", err)
+		fmt.Fprintf(os.Stderr, "FAIL build: %v\n", err)
 		return 1
 	}
-	fmt.Printf("  states: %d, actions: %d, arcs: %d\n",
-		len(schema.States), len(schema.Actions), len(schema.InputArcs(""))+len(schema.OutputArcs("")))
+	fmt.Printf("  schema   %s (%d states, %d actions, %d arcs)\n",
+		ast.Name, len(schema.States), len(schema.Actions), len(schema.Arcs))
 
 	// Step 3: Generate Solidity
 	contractName := solidity.ContractName(schema.Name)
 	contractCode := solidity.Generate(schema)
 	testCode := solidity.GenerateTests(schema)
 	genesisCode := solidity.GenerateGenesis(schema.Name, solidity.GenesisConfig{}, solidity.DefaultAddresses())
-	fmt.Printf("● generate Solidity: %s.sol (%d bytes)\n", contractName, len(contractCode))
-	fmt.Printf("  tests: %sTest.t.sol (%d bytes)\n", contractName, len(testCode))
-	fmt.Printf("  genesis: %sGenesis.s.sol (%d bytes)\n", contractName, len(genesisCode))
+	fmt.Printf("  solidity %s.sol (%d bytes), tests (%d bytes), genesis (%d bytes)\n",
+		contractName, len(contractCode), len(testCode), len(genesisCode))
 
 	// Step 4: Check for forge
 	if _, err := exec.LookPath("forge"); err != nil {
-		fmt.Printf("● forge not installed — skipping compilation and deployment\n")
-		fmt.Printf("PASS (parse + generate only)\n")
+		fmt.Printf("  skip     forge not installed\n")
+		fmt.Printf("PASS (parse + generate)\n")
 		return 0
 	}
 
 	// Step 5: Set up temp Foundry project
 	dir, err := os.MkdirTemp("", "bitwrap-validate-*")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "FAIL: tmpdir: %v\n", err)
+		fmt.Fprintf(os.Stderr, "FAIL tmpdir: %v\n", err)
 		return 1
 	}
 	defer os.RemoveAll(dir)
@@ -144,33 +142,57 @@ func runValidate(path string) int {
 	os.WriteFile(filepath.Join(dir, "script", contractName+"Genesis.s.sol"), []byte(genesisCode), 0o644)
 
 	// Step 6: Install forge-std
-	if !runStep(dir, "install forge-std", "git", "init") {
+	if !runStep(dir, "deps", "git", "init") {
 		return 1
 	}
-	if !runStep(dir, "install forge-std", "forge", "install", "foundry-rs/forge-std") {
+	if !runStep(dir, "deps", "forge", "install", "foundry-rs/forge-std") {
 		return 1
 	}
 
 	// Step 7: Compile
-	if !runStep(dir, "forge build", "forge", "build") {
+	if !runStep(dir, "compile", "forge", "build") {
 		return 1
 	}
 
-	// Step 8: Test
-	if !runStep(dir, "forge test", "forge", "test", "-vv") {
+	// Step 8: Test — show individual results
+	fmt.Printf("  test     ")
+	cmd := exec.Command("forge", "test", "-vv")
+	cmd.Dir = dir
+	out, testErr := cmd.CombinedOutput()
+	outStr := string(out)
+
+	// Count pass/fail from forge output
+	passed, failed := 0, 0
+	for _, line := range strings.Split(outStr, "\n") {
+		if strings.Contains(line, "[PASS]") {
+			passed++
+		} else if strings.Contains(line, "[FAIL") {
+			failed++
+		}
+	}
+	if testErr != nil {
+		fmt.Printf("%d passed, %d failed\n", passed, failed)
+		// Show failing test names
+		for _, line := range strings.Split(outStr, "\n") {
+			if strings.Contains(line, "[FAIL") {
+				fmt.Printf("           %s\n", strings.TrimSpace(line))
+			}
+		}
+		fmt.Fprintf(os.Stderr, "FAIL forge test\n")
 		return 1
 	}
+	fmt.Printf("%d passed\n", passed)
 
 	// Step 9: Deploy to anvil
 	if _, err := exec.LookPath("anvil"); err != nil {
-		fmt.Printf("● anvil not installed — skipping deployment\n")
+		fmt.Printf("  skip     anvil not installed\n")
 		fmt.Printf("PASS\n")
 		return 0
 	}
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "FAIL: find free port: %v\n", err)
+		fmt.Fprintf(os.Stderr, "FAIL find free port: %v\n", err)
 		return 1
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
@@ -179,15 +201,14 @@ func runValidate(path string) int {
 	rpcURL := fmt.Sprintf("http://127.0.0.1:%d", port)
 	anvil := exec.Command("anvil", "--port", fmt.Sprintf("%d", port), "--silent")
 	if err := anvil.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "FAIL: start anvil: %v\n", err)
+		fmt.Fprintf(os.Stderr, "FAIL start anvil: %v\n", err)
 		return 1
 	}
 	defer func() { anvil.Process.Kill(); anvil.Wait() }()
 
-	// Wait for anvil
 	for i := 0; i < 50; i++ {
-		cmd := exec.Command("cast", "chain-id", "--rpc-url", rpcURL)
-		if out, err := cmd.CombinedOutput(); err == nil && strings.TrimSpace(string(out)) == "31337" {
+		c := exec.Command("cast", "chain-id", "--rpc-url", rpcURL)
+		if o, e := c.CombinedOutput(); e == nil && strings.TrimSpace(string(o)) == "31337" {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -197,18 +218,21 @@ func runValidate(path string) int {
 	createArgs := []string{"create", fmt.Sprintf("src/%s.sol:%s", contractName, contractName),
 		"--rpc-url", rpcURL, "--private-key", privKey, "--broadcast"}
 
-	cmd := exec.Command("forge", createArgs...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil || !strings.Contains(string(out), "Deployed to:") {
-		fmt.Fprintf(os.Stderr, "● deploy FAIL\n%s\n", out)
+	deployCmd := exec.Command("forge", createArgs...)
+	deployCmd.Dir = dir
+	deployOut, deployErr := deployCmd.CombinedOutput()
+	deployStr := string(deployOut)
+	if deployErr != nil || !strings.Contains(deployStr, "Deployed to:") {
+		fmt.Fprintf(os.Stderr, "FAIL deploy\n%s\n", deployStr)
 		return 1
 	}
 
-	// Extract address
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(deployStr, "\n") {
 		if strings.Contains(line, "Deployed to:") {
-			fmt.Printf("● deploy: %s\n", strings.TrimSpace(line))
+			parts := strings.Fields(line)
+			if len(parts) >= 3 {
+				fmt.Printf("  deploy   %s\n", parts[len(parts)-1])
+			}
 		}
 	}
 
@@ -217,13 +241,15 @@ func runValidate(path string) int {
 }
 
 func runStep(dir, label, name string, args ...string) bool {
-	fmt.Printf("● %s\n", label)
+	fmt.Printf("  %-8s ", label)
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "FAIL: %s\n%s\n", label, out)
+		fmt.Printf("FAIL\n")
+		fmt.Fprintf(os.Stderr, "%s\n", out)
 		return false
 	}
+	fmt.Printf("ok\n")
 	return true
 }

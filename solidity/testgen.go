@@ -137,6 +137,19 @@ func (g *testGenerator) generateActionTest(action metamodel.Action) string {
 		return b.String()
 	}
 
+	// If the action's guard references state that starts at zero and we can't
+	// set it up automatically, generate an expectRevert test instead.
+	if g.needsStateSetup(action) && !g.needsMintSetup(funcName) {
+		b.WriteString("        // Action requires prior state — verify guard reverts\n")
+		b.WriteString("        vm.expectRevert();\n")
+		if !isPrivilegedAction(funcName) && !g.isCreatorGuarded(funcName) {
+			b.WriteString("        vm.prank(alice);\n")
+		}
+		b.WriteString(fmt.Sprintf("        token.%s(%s);\n", funcName, params))
+		b.WriteString("    }\n\n")
+		return b.String()
+	}
+
 	// If action consumes tokens, mint first (as owner).
 	// Skip for vesting schemas — setUp already calls create().
 	if g.needsMintSetup(funcName) && g.hasAction("mint") && !strings.HasPrefix(g.schema.Version, "ERC-05725:") {
@@ -459,15 +472,25 @@ func (g *testGenerator) collectFunctionParams(action metamodel.Action) map[strin
 func (g *testGenerator) inferZeroParams(action metamodel.Action) string {
 	params := g.collectFunctionParams(action)
 
+	// If the guard has "state >= amount" or "state[key] >= amount",
+	// use amount=1 to trigger failure (0 >= 0 would pass).
+	useNonZeroAmount := false
+	if action.Guard != "" {
+		for _, state := range g.schema.States {
+			if strings.Contains(action.Guard, state.ID) && strings.Contains(action.Guard, ">= amount") {
+				useNonZeroAmount = true
+				break
+			}
+		}
+	}
+
 	var parts []string
 	for _, name := range sortedParams(params) {
 		switch params[name] {
 		case "address":
 			parts = append(parts, "address(0)")
 		case "uint256":
-			// Use 1 for amounts so guards like "balances[from] >= amount" actually fail
-			// (0 >= 0 would pass, but 0 >= 1 fails)
-			if name == "amount" || name == "assets" || name == "shares" || name == "total" || name == "claimAmount" {
+			if useNonZeroAmount && (name == "amount" || name == "assets" || name == "shares") {
 				parts = append(parts, "1")
 			} else {
 				parts = append(parts, "0")
@@ -500,6 +523,26 @@ func (g *testGenerator) needsMintSetup(funcName string) bool {
 	case "transfer", "burn", "approve", "transferFrom",
 		"safeTransferFrom", "safeBatchTransferFrom", "burnBatch":
 		return true
+	}
+	return false
+}
+
+// needsStateSetup returns true if the action's guard references state variables
+// with conditions that require prior state (e.g., "BALANCES[from] >= amount").
+// This detects actions that need tokens/data to exist before they can fire.
+func (g *testGenerator) needsStateSetup(action metamodel.Action) bool {
+	if action.Guard == "" {
+		return false
+	}
+	for _, state := range g.schema.States {
+		// Guard references state (scalar or mapped) with a comparison — needs prior value
+		if strings.Contains(action.Guard, state.ID) && (strings.Contains(action.Guard, ">=") || strings.Contains(action.Guard, ">")) {
+			// Don't count "amount > 0" style guards (they don't reference state)
+			if state.ID == "amount" || state.ID == "total" {
+				continue
+			}
+			return true
+		}
 	}
 	return false
 }
