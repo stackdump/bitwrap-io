@@ -62,7 +62,7 @@ func (s *Server) handleCreatePoll(w http.ResponseWriter, r *http.Request) {
 	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
 		clientIP = strings.SplitN(fwd, ",", 2)[0]
 	}
-	if !s.pollRateLimiter.Allow(clientIP) {
+	if !s.opts.DevMode && !s.pollRateLimiter.Allow(clientIP) {
 		http.Error(w, "rate limit exceeded (5 polls per hour)", http.StatusTooManyRequests)
 		return
 	}
@@ -88,7 +88,7 @@ func (s *Server) handleCreatePoll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Also rate limit by wallet address
-	if !s.pollRateLimiter.Allow("wallet:" + strings.ToLower(req.Creator)) {
+	if !s.opts.DevMode && !s.pollRateLimiter.Allow("wallet:"+strings.ToLower(req.Creator)) {
 		http.Error(w, "rate limit exceeded for this wallet (5 polls per hour)", http.StatusTooManyRequests)
 		return
 	}

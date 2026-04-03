@@ -12,10 +12,22 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
-// devPrivateKey is a well-known test key (anvil account 0). Only used in dev mode.
-var devPrivateKey = fromHex("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")
+// devKeys are well-known test keys (anvil HD wallet accounts 0-9). Only used in dev mode.
+var devKeys = []*big.Int{
+	fromHex("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"),
+	fromHex("59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"),
+	fromHex("5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"),
+	fromHex("7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6"),
+	fromHex("47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a"),
+	fromHex("8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba"),
+	fromHex("92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e"),
+	fromHex("4bbbf85ce3377467afe5d46f804f221813b2bb87f24d81f60f1fcdbf7cbf4356"),
+	fromHex("dbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97"),
+	fromHex("2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6"),
+}
 
-// handleDevSign signs a message with the built-in dev key.
+// handleDevSign signs a message with a built-in dev key.
+// Accepts optional "account" field (0-9) to select which anvil account signs.
 // Only available when server is started with -dev flag.
 func (s *Server) handleDevSign(w http.ResponseWriter, r *http.Request) {
 	if !s.opts.DevMode {
@@ -25,13 +37,17 @@ func (s *Server) handleDevSign(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		Message string `json:"message"`
+		Account int    `json:"account"` // 0-9, defaults to 0
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Message == "" {
 		http.Error(w, "message field required", http.StatusBadRequest)
 		return
 	}
+	if req.Account < 0 || req.Account >= len(devKeys) {
+		req.Account = 0
+	}
 
-	sig, addr := devSign(req.Message)
+	sig, addr := devSignWithKey(req.Message, devKeys[req.Account])
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
@@ -40,8 +56,13 @@ func (s *Server) handleDevSign(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// devSign signs a message with the dev private key using EIP-191 personal_sign.
+// devSign signs a message with anvil account 0.
 func devSign(message string) (string, string) {
+	return devSignWithKey(message, devKeys[0])
+}
+
+// devSignWithKey signs a message with the given private key using EIP-191 personal_sign.
+func devSignWithKey(message string, privKey *big.Int) (string, string) {
 	// EIP-191 prefix
 	prefix := fmt.Sprintf("\x19Ethereum Signed Message:\n%d", len(message))
 	hash := keccak256(append([]byte(prefix), []byte(message)...))
@@ -49,7 +70,7 @@ func devSign(message string) (string, string) {
 
 	// Deterministic k (RFC 6979 simplified)
 	kMat := make([]byte, 64)
-	copy(kMat[:32], devPrivateKey.Bytes())
+	copy(kMat[:32], privKey.Bytes())
 	copy(kMat[32:], hash)
 	k := new(big.Int).SetBytes(keccak256(kMat))
 	k.Mod(k, new(big.Int).Sub(secp256k1N, big.NewInt(1)))
@@ -57,7 +78,7 @@ func devSign(message string) (string, string) {
 
 	rx, ry := ecMul(secp256k1Gx, secp256k1Gy, k)
 	r := new(big.Int).Mod(rx, secp256k1N)
-	s := new(big.Int).Mul(r, devPrivateKey)
+	s := new(big.Int).Mul(r, privKey)
 	s.Add(s, z)
 	s.Mod(s, secp256k1N)
 	s.Mul(s, new(big.Int).ModInverse(k, secp256k1N))
@@ -90,7 +111,7 @@ func devSign(message string) (string, string) {
 	sigHex := "0x" + hex.EncodeToString(sigBytes)
 
 	// Derive address
-	pubX, pubY := ecMul(secp256k1Gx, secp256k1Gy, devPrivateKey)
+	pubX, pubY := ecMul(secp256k1Gx, secp256k1Gy, privKey)
 	pubBytes := make([]byte, 64)
 	pxBytes := pubX.Bytes()
 	pyBytes := pubY.Bytes()
