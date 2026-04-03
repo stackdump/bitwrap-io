@@ -56,6 +56,54 @@ const (
 	TokenOr   // ||
 )
 
+// String returns a human-readable name for the token type.
+func (t TokenType) String() string {
+	switch t {
+	case TokenEOF:
+		return "end of file"
+	case TokenError:
+		return "error"
+	case TokenIdent:
+		return "identifier"
+	case TokenString:
+		return "string"
+	case TokenNumber:
+		return "number"
+	case TokenSchema:
+		return "schema"
+	case TokenRegister:
+		return "register"
+	case TokenEvent:
+		return "event"
+	case TokenFn:
+		return "fn"
+	case TokenVar:
+		return "var"
+	case TokenRequire:
+		return "require"
+	case TokenLBrace:
+		return "{"
+	case TokenRBrace:
+		return "}"
+	case TokenLParen:
+		return "("
+	case TokenRParen:
+		return ")"
+	case TokenLBracket:
+		return "["
+	case TokenRBracket:
+		return "]"
+	case TokenArcIn:
+		return "-|"
+	case TokenArcOut:
+		return "|>"
+	case TokenAt:
+		return "@"
+	default:
+		return fmt.Sprintf("token(%d)", int(t))
+	}
+}
+
 // Token is a single lexical token with its position.
 type Token struct {
 	Type    TokenType

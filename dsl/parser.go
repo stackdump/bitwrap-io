@@ -40,7 +40,7 @@ func (p *Parser) advance() Token {
 func (p *Parser) expect(tt TokenType) (Token, error) {
 	t := p.advance()
 	if t.Type != tt {
-		return t, fmt.Errorf("line %d: expected token type %d, got %d (%q)", t.Line, tt, t.Type, t.Value)
+		return t, fmt.Errorf("line %d: expected %s, got %q", t.Line, tt, t.Value)
 	}
 	return t, nil
 }
