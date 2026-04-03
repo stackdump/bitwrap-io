@@ -580,6 +580,20 @@ func TestValidation(t *testing.T) {
 			want: "needs 2 index key(s)",
 		},
 		{
+			name: "undeclared arc weight",
+			src:  `schema Foo { version "1.0" register X uint256 fn(f) { f -|typo|> X } }`,
+			want: `arc weight "typo" is not a declared variable`,
+		},
+		{
+			name: "hash comment",
+			src: `# comment
+schema Foo { version "1.0"
+  register X uint256  # inline comment
+  fn(inc) { var amount amount inc -|amount|> X }
+}`,
+			want: "", // no error
+		},
+		{
 			name: "valid schema passes",
 			src: `schema Foo { version "1.0"
 				register X map[address]uint256 observable

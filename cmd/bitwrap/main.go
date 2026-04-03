@@ -28,6 +28,7 @@ func main() {
 	keyDir := flag.String("key-dir", "", "Directory for persistent circuit keys (enables fast restarts)")
 	compile := flag.String("compile", "", "Compile a .btw file and output JSON schema to stdout")
 	validate := flag.String("validate", "", "Validate a .btw file: compile → generate Solidity → forge build → forge test → deploy")
+	output := flag.String("output", "", "Save generated Foundry project to this directory (use with -validate)")
 	flag.Parse()
 
 	if *compile != "" {
@@ -52,7 +53,7 @@ func main() {
 	}
 
 	if *validate != "" {
-		os.Exit(runValidate(*validate))
+		os.Exit(runValidate(*validate, *output))
 	}
 
 	storage := store.NewFSStore(*dataDir)
@@ -84,7 +85,7 @@ func main() {
 
 // runValidate compiles a .btw file through the full pipeline:
 // parse → build schema → generate Solidity + tests → forge build → forge test → deploy to anvil
-func runValidate(path string) int {
+func runValidate(path, outputDir string) int {
 	src, err := os.ReadFile(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "FAIL read %s: %v\n", path, err)
@@ -123,13 +124,19 @@ func runValidate(path string) int {
 		return 0
 	}
 
-	// Step 5: Set up temp Foundry project
-	dir, err := os.MkdirTemp("", "bitwrap-validate-*")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "FAIL tmpdir: %v\n", err)
-		return 1
+	// Step 5: Set up Foundry project directory
+	var dir string
+	if outputDir != "" {
+		dir = outputDir
+		os.MkdirAll(dir, 0o755)
+	} else {
+		dir, err = os.MkdirTemp("", "bitwrap-validate-*")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "FAIL tmpdir: %v\n", err)
+			return 1
+		}
+		defer os.RemoveAll(dir)
 	}
-	defer os.RemoveAll(dir)
 
 	for _, sub := range []string{"src", "test", "script"} {
 		os.MkdirAll(filepath.Join(dir, sub), 0o755)
@@ -236,6 +243,9 @@ func runValidate(path string) int {
 		}
 	}
 
+	if outputDir != "" {
+		fmt.Printf("  output   %s/\n", outputDir)
+	}
 	fmt.Printf("PASS\n")
 	return 0
 }

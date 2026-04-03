@@ -187,7 +187,14 @@ func (l *Lexer) skipWhitespace() {
 	for l.pos < len(l.input) {
 		r := l.input[l.pos]
 		if r == '/' && l.pos+1 < len(l.input) && l.input[l.pos+1] == '/' {
-			// line comment
+			// line comment (//)
+			for l.pos < len(l.input) && l.input[l.pos] != '\n' {
+				l.pos++
+			}
+			continue
+		}
+		if r == '#' {
+			// line comment (#)
 			for l.pos < len(l.input) && l.input[l.pos] != '\n' {
 				l.pos++
 			}

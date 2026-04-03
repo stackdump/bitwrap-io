@@ -175,6 +175,16 @@ func validate(ast *Schema, s *metamodel.Schema) error {
 				return fmt.Errorf("function %s: register %s needs %d index key(s) (type %s), got %d",
 					fn.Name, reg.Name, mapDepth, reg.Type, indexCount)
 			}
+
+			// Validate arc weight is a declared variable or numeric literal
+			w := arc.Weight
+			if w != "" && !isNumeric(w) {
+				vars := fnVars[fn.Name]
+				if !vars[w] && w != "caller" {
+					return fmt.Errorf("function %s: arc weight %q is not a declared variable (use 'var %s amount' to declare it)",
+						fn.Name, w, w)
+				}
+			}
 		}
 	}
 
