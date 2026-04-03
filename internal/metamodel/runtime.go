@@ -193,6 +193,16 @@ func (r *Runtime) ExecuteWithBindings(actionID string, bindings Bindings) error 
 
 // applyArcs processes input and output arcs for an action.
 func (r *Runtime) applyArcs(actionID string, bindings Bindings) {
+	// Build output target set for read-arc detection (matches codegen behavior).
+	outputTargets := make(map[string]bool)
+	for _, arc := range r.Schema.OutputArcs(actionID) {
+		key := arc.Target
+		for _, k := range arc.Keys {
+			key += "|" + k
+		}
+		outputTargets[key] = true
+	}
+
 	// Process input arcs (consume from source states)
 	for _, arc := range r.Schema.InputArcs(actionID) {
 		st := r.Schema.StateByID(arc.Source)
@@ -200,9 +210,19 @@ func (r *Runtime) applyArcs(actionID string, bindings Bindings) {
 			continue
 		}
 
+		// Skip read arcs (input+output to same keyed state) — matches codegen
+		inputKey := arc.Source
+		for _, k := range arc.Keys {
+			inputKey += "|" + k
+		}
+		if outputTargets[inputKey] && st.IsData() {
+			continue
+		}
+
 		if st.IsToken() {
-			// TokenState: decrement count
-			r.Snapshot.AddTokens(arc.Source, -1)
+			// TokenState: use arc Value from bindings, or default to 1
+			delta := r.arcWeight(arc, bindings)
+			r.Snapshot.AddTokens(arc.Source, -delta)
 		} else {
 			// DataState: subtract from map using arc keys
 			r.applyDataArc(arc.Source, arc, bindings, false)
@@ -217,13 +237,47 @@ func (r *Runtime) applyArcs(actionID string, bindings Bindings) {
 		}
 
 		if st.IsToken() {
-			// TokenState: increment count
-			r.Snapshot.AddTokens(arc.Target, 1)
+			// TokenState: use arc Value from bindings, or default to 1
+			delta := r.arcWeight(arc, bindings)
+			r.Snapshot.AddTokens(arc.Target, delta)
 		} else {
 			// DataState: add to map using arc keys
 			r.applyDataArc(arc.Target, arc, bindings, true)
 		}
 	}
+}
+
+// arcWeight returns the integer weight for an arc from bindings.
+// If the arc has an explicit Value name, look it up in bindings.
+// If the Value is a literal number, use that.
+// Otherwise default to 1 (Petri net semantics).
+func (r *Runtime) arcWeight(arc Arc, bindings Bindings) int {
+	v := arc.Value
+	if v == "" {
+		return 1
+	}
+	// Check if it's a literal number
+	if isNumericLiteral(v) {
+		n := 0
+		for _, c := range v {
+			n = n*10 + int(c-'0')
+		}
+		return n
+	}
+	// Look up in bindings
+	return int(bindings.GetInt64(v))
+}
+
+func isNumericLiteral(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // applyDataArc applies a data transformation to a DataState.
