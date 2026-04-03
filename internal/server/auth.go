@@ -2,13 +2,105 @@ package server
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
+	"net/http"
 	"strings"
 
 	"golang.org/x/crypto/sha3"
 )
+
+// devPrivateKey is a well-known test key (anvil account 0). Only used in dev mode.
+var devPrivateKey = fromHex("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")
+
+// handleDevSign signs a message with the built-in dev key.
+// Only available when server is started with -dev flag.
+func (s *Server) handleDevSign(w http.ResponseWriter, r *http.Request) {
+	if !s.opts.DevMode {
+		http.Error(w, "dev mode not enabled (start with -dev flag)", http.StatusForbidden)
+		return
+	}
+
+	var req struct {
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Message == "" {
+		http.Error(w, "message field required", http.StatusBadRequest)
+		return
+	}
+
+	sig, addr := devSign(req.Message)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"signature": sig,
+		"address":   addr,
+	})
+}
+
+// devSign signs a message with the dev private key using EIP-191 personal_sign.
+func devSign(message string) (string, string) {
+	// EIP-191 prefix
+	prefix := fmt.Sprintf("\x19Ethereum Signed Message:\n%d", len(message))
+	hash := keccak256(append([]byte(prefix), []byte(message)...))
+	z := new(big.Int).SetBytes(hash)
+
+	// Deterministic k (RFC 6979 simplified)
+	kMat := make([]byte, 64)
+	copy(kMat[:32], devPrivateKey.Bytes())
+	copy(kMat[32:], hash)
+	k := new(big.Int).SetBytes(keccak256(kMat))
+	k.Mod(k, new(big.Int).Sub(secp256k1N, big.NewInt(1)))
+	k.Add(k, big.NewInt(1))
+
+	rx, ry := ecMul(secp256k1Gx, secp256k1Gy, k)
+	r := new(big.Int).Mod(rx, secp256k1N)
+	s := new(big.Int).Mul(r, devPrivateKey)
+	s.Add(s, z)
+	s.Mod(s, secp256k1N)
+	s.Mul(s, new(big.Int).ModInverse(k, secp256k1N))
+	s.Mod(s, secp256k1N)
+
+	// Recovery id
+	v := byte(27)
+	if ry.Bit(0) == 1 {
+		v = 28
+	}
+
+	// Low-s normalization (EIP-2)
+	halfN := new(big.Int).Rsh(secp256k1N, 1)
+	if s.Cmp(halfN) > 0 {
+		s.Sub(secp256k1N, s)
+		if v == 27 {
+			v = 28
+		} else {
+			v = 27
+		}
+	}
+
+	sigBytes := make([]byte, 65)
+	rBytes := r.Bytes()
+	sBytes := s.Bytes()
+	copy(sigBytes[32-len(rBytes):32], rBytes)
+	copy(sigBytes[64-len(sBytes):64], sBytes)
+	sigBytes[64] = v
+
+	sigHex := "0x" + hex.EncodeToString(sigBytes)
+
+	// Derive address
+	pubX, pubY := ecMul(secp256k1Gx, secp256k1Gy, devPrivateKey)
+	pubBytes := make([]byte, 64)
+	pxBytes := pubX.Bytes()
+	pyBytes := pubY.Bytes()
+	copy(pubBytes[32-len(pxBytes):32], pxBytes)
+	copy(pubBytes[64-len(pyBytes):64], pyBytes)
+	addrHash := keccak256(pubBytes)
+	addr := "0x" + hex.EncodeToString(addrHash[12:])
+
+	return sigHex, addr
+}
 
 // secp256k1 curve parameters
 var (
@@ -76,14 +168,11 @@ func RecoverAddress(message string, signature string) (string, error) {
 // ecRecover recovers the public key from an ECDSA signature on secp256k1.
 // Returns (pubX, pubY) or error.
 func ecRecover(hash []byte, r, s *big.Int, v byte) (*big.Int, *big.Int, error) {
-	// Calculate R point x-coordinate
+	// R point x-coordinate is just r (the rx += N case is for v >= 2, extremely rare)
 	rx := new(big.Int).Set(r)
-	if v == 1 {
-		rx.Add(rx, secp256k1N)
-	}
 
-	// Decompress R point: find y from x on secp256k1
-	ry := decompressPoint(rx, v%2 == 1)
+	// v encodes the parity of R.y: v=0 → even, v=1 → odd
+	ry := decompressPoint(rx, v == 1)
 	if ry == nil {
 		return nil, nil, errors.New("invalid signature: R not on curve")
 	}

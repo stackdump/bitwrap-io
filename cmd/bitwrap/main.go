@@ -26,6 +26,7 @@ func main() {
 	noProver := flag.Bool("no-prover", false, "Disable ZK prover (faster startup)")
 	noSolgen := flag.Bool("no-solgen", false, "Disable Solidity generation endpoints")
 	keyDir := flag.String("key-dir", "", "Directory for persistent circuit keys (enables fast restarts)")
+	devMode := flag.Bool("dev", false, "Enable dev mode (built-in test wallet, /api/dev/* endpoints)")
 	compile := flag.String("compile", "", "Compile a .btw file and output JSON schema to stdout")
 	validate := flag.String("validate", "", "Validate a .btw file: compile → generate Solidity → forge build → forge test → deploy")
 	output := flag.String("output", "", "Save generated Foundry project to this directory (use with -validate)")
@@ -67,6 +68,7 @@ func main() {
 		EnableProver:   !*noProver,
 		EnableSolidity: !*noSolgen,
 		KeyDir:         *keyDir,
+		DevMode:        *devMode,
 	})
 
 	addr := fmt.Sprintf(":%d", *port)
@@ -77,6 +79,9 @@ func main() {
 	}
 	if *noSolgen {
 		log.Printf("Solidity generation: disabled")
+	}
+	if *devMode {
+		log.Printf("Dev mode: enabled (add ?dev-wallet to poll URL for built-in wallet)")
 	}
 	if err := http.ListenAndServe(addr, srv); err != nil {
 		log.Fatalf("Server failed: %v", err)

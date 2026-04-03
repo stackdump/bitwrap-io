@@ -271,6 +271,10 @@
     </div>
 </div>
 
+<script type="module">
+import { isDevWalletEnabled, enableDevWallet } from './dev-wallet.js';
+if (isDevWalletEnabled()) enableDevWallet();
+</script>
 <script type="module" src="poll.js"></script>
 </body>
 </html>

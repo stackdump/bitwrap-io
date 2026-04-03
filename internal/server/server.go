@@ -26,6 +26,7 @@ type Options struct {
 	EnableProver   bool
 	EnableSolidity bool
 	KeyDir         string // directory for persistent circuit keys (empty = no persistence)
+	DevMode        bool   // enable dev endpoints (e.g., /api/dev/sign for wallet-free testing)
 }
 
 // Server is the bitwrap HTTP server.
@@ -112,6 +113,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleVK(w, r)
 	case r.URL.Path == "/api/compile" && r.Method == http.MethodPost:
 		s.handleCompile(w, r)
+	case r.URL.Path == "/api/dev/sign" && r.Method == http.MethodPost:
+		s.handleDevSign(w, r)
 
 	// Poll routes
 	case r.URL.Path == "/api/polls" && r.Method == http.MethodPost:
