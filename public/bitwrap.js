@@ -452,24 +452,68 @@ function injectPollChoices(model, poll) {
         });
     });
 
-    // Reposition remaining places below the choices
-    const bottomY = topY + 300;
-    const remaining = Object.keys(m.places).filter(k => !k.startsWith('tally:'));
-    remaining.forEach((id, i) => {
-        const rx = Math.round(cx - ((remaining.length - 1) * 100) / 2 + i * 100);
-        m.places[id].x = rx;
-        m.places[id].y = bottomY;
+    // Position shared places and lifecycle transitions
+    const midY = topY + 300;
+    const botY = topY + 420;
+
+    // pollConfig: center, tracks poll state (0=inactive, 1=active, 2=closed)
+    m.places['pollConfig'] = {
+        ...m.places['pollConfig'],
+        x: cx, y: midY,
+        initial: [0],
+    };
+
+    // voterRegistry: left, counts registered voters
+    const regCount = (poll.voterCommitments && poll.voterCommitments.length) || 0;
+    m.places['voterRegistry'] = {
+        ...m.places['voterRegistry'],
+        x: cx - 180, y: midY,
+        initial: [regCount],
+    };
+
+    // nullifiers: right, counts used nullifiers
+    m.places['nullifiers'] = {
+        ...m.places['nullifiers'],
+        x: cx + 180, y: midY,
+    };
+
+    // createPoll: left bottom — sets pollConfig from 0→1
+    if (m.transitions['createPoll']) {
+        m.transitions['createPoll'].x = cx - 120;
+        m.transitions['createPoll'].y = botY;
+    }
+
+    // closePoll: right bottom — sets pollConfig from 1→2
+    if (m.transitions['closePoll']) {
+        m.transitions['closePoll'].x = cx + 120;
+        m.transitions['closePoll'].y = botY;
+    }
+
+    // Wire createPoll → pollConfig (produces a token: poll becomes active)
+    m.arcs.push({
+        source: 'createPoll', target: 'pollConfig',
+        weight: [1], inhibitTransition: false, '@type': 'Arrow',
     });
 
-    // Reposition createPoll and closePoll
-    if (m.transitions['createPoll']) {
-        m.transitions['createPoll'].x = cx - 150;
-        m.transitions['createPoll'].y = bottomY - 80;
-    }
-    if (m.transitions['closePoll']) {
-        m.transitions['closePoll'].x = cx + 150;
-        m.transitions['closePoll'].y = bottomY - 80;
-    }
+    // Wire pollConfig → closePoll (consumes: poll becomes closed)
+    m.arcs.push({
+        source: 'pollConfig', target: 'closePoll',
+        weight: [1], inhibitTransition: false, '@type': 'Arrow',
+    });
+
+    // Wire pollConfig → each vote transition (read arc: poll must be active to vote)
+    // Use inhibitor-like pattern: vote needs pollConfig >= 1
+    choices.forEach((name) => {
+        m.arcs.push({
+            source: 'pollConfig', target: 'vote:' + name,
+            weight: [1], inhibitTransition: false, '@type': 'Arrow',
+        });
+        // Return the token (read arc — doesn't consume)
+        m.arcs.push({
+            source: 'vote:' + name, target: 'pollConfig',
+            weight: [1], inhibitTransition: false, '@type': 'Arrow',
+        });
+    });
 
     m.name = poll.title || m.name;
     return m;
