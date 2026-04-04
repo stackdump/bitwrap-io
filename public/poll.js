@@ -181,6 +181,11 @@ async function loadPoll(pollId) {
         document.getElementById('vote-title').textContent = poll.title;
         document.getElementById('vote-desc').textContent = poll.description || '';
 
+        // Update "View Petri Net Model" links to include this poll's ID
+        document.querySelectorAll('#view-model-link').forEach(el => {
+            el.href = `/editor?template=vote&poll=${pollId}`;
+        });
+
         const statusEl = document.getElementById('vote-status');
         statusEl.textContent = poll.status;
         statusEl.className = 'poll-status ' + poll.status;

@@ -338,6 +338,8 @@ function downloadFile(filename, content) {
 // Load model from URL params on page load
 (function() {
     const params = new URLSearchParams(window.location.search);
+
+    // Load by CID: /editor?cid=<cid>
     const cid = params.get('cid');
     if (cid) {
         fetch('/o/' + cid)
@@ -348,5 +350,38 @@ function downloadFile(filename, content) {
                 }
             })
             .catch(err => console.error('Failed to load model:', err));
+        return;
+    }
+
+    // Load by template: /editor?template=<id>&poll=<pollId>
+    const template = params.get('template');
+    if (template) {
+        fetch('/api/templates/' + template)
+            .then(r => r.ok ? r.json() : null)
+            .then(data => {
+                if (data && petriView && petriView.loadModel) {
+                    petriView.loadModel(data);
+                }
+            })
+            .catch(err => console.error('Failed to load template:', err));
+
+        // If a poll ID is provided, show poll info in the toolbar
+        const pollId = params.get('poll');
+        if (pollId) {
+            fetch('/api/polls/' + pollId)
+                .then(r => r.ok ? r.json() : null)
+                .then(data => {
+                    if (data && data.poll) {
+                        const poll = data.poll;
+                        const info = document.createElement('span');
+                        info.style.cssText = 'color:#aaa;font-size:13px;margin-left:12px;';
+                        info.textContent = `${poll.title} (${poll.status})`;
+                        const toolbar = document.querySelector('.toolbar, nav') || document.body;
+                        toolbar.appendChild(info);
+                    }
+                })
+                .catch(() => {});
+        }
+        return;
     }
 })();
