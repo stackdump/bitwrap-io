@@ -294,8 +294,8 @@ if (btnTemplates) {
             const tmplResp = await fetch('/api/templates/' + template.id);
             if (tmplResp.ok) {
                 const tmplData = await tmplResp.json();
-                if (petriView && petriView.loadModel) {
-                    petriView.loadModel(tmplData);
+                if (petriView && petriView.setModel) {
+                    petriView.setModel(tmplData);
                 } else {
                     // Fallback: show as JSON
                     const json = JSON.stringify(tmplData, null, 2);
@@ -346,13 +346,13 @@ function downloadFile(filename, content) {
             fetch('/o/' + cid)
                 .then(r => r.ok ? r.json() : null)
                 .then(data => {
-                    if (data && petriView && petriView.loadModel) {
-                        petriView.loadModel(data);
+                    if (data && petriView && petriView.setModel) {
+                        petriView.setModel(data);
                     }
                 })
                 .catch(err => console.error('Failed to load model:', err));
         };
-        if (petriView && petriView.loadModel) {
+        if (petriView && petriView.setModel) {
             loadCid();
         } else if (customElements) {
             customElements.whenDefined('petri-view').then(loadCid);
@@ -368,13 +368,13 @@ function downloadFile(filename, content) {
             fetch('/api/templates/' + template)
                 .then(r => r.ok ? r.json() : null)
                 .then(data => {
-                    if (data && petriView && petriView.loadModel) {
-                        petriView.loadModel(data);
+                    if (data && petriView && petriView.setModel) {
+                        petriView.setModel(data);
                     }
                 })
                 .catch(err => console.error('Failed to load template:', err));
         };
-        if (petriView && petriView.loadModel) {
+        if (petriView && petriView.setModel) {
             loadTemplate();
         } else if (customElements) {
             customElements.whenDefined('petri-view').then(loadTemplate);
