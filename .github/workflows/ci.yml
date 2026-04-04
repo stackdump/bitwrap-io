@@ -123,3 +123,39 @@ jobs:
             node --check "$f" || exit 1
           done
           echo "All JS files pass syntax check"
+
+  playwright:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build server
+        run: make build
+
+      - name: Install Playwright
+        run: cd e2e && npm ci && npx playwright install chromium --with-deps
+
+      - name: Start server
+        run: ./bitwrap -port 8088 -dev -no-prover &
+
+      - name: Wait for server
+        run: |
+          for i in $(seq 1 30); do
+            curl -s http://localhost:8088/api/templates > /dev/null && break
+            sleep 1
+          done
+
+      - name: Run Playwright tests
+        run: cd e2e && npx playwright test
+
+      - name: Stop server
+        if: always()
+        run: pkill -f './bitwrap -port' || true
