@@ -3,6 +3,7 @@
 import { mimcHash } from './mimc.js';
 import { MerkleTree } from './merkle.js';
 import { buildVoteCastWitness } from './witness-builder.js';
+import { prove as workerProve, loadKeys, initProver } from './prover.js';
 
 // Current poll context
 window.currentPollId = null;
@@ -317,16 +318,15 @@ window.castVote = async function() {
 
         btn.innerHTML = '<span class="spinner"></span>Generating proof...';
 
-        // Try WASM prover first (privacy-preserving), fall back to server
+        // Try WASM prover in Web Worker first (non-blocking), fall back to server
         let proofData;
         let clientSideProved = false;
-        if (window.bitwrapProver && window.bitwrapProver.prove) {
-            try {
-                proofData = await window.bitwrapProver.prove(witnessResult.circuit, witnessResult.witness);
-                clientSideProved = true;
-            } catch (e) {
-                console.warn('Client-side proving failed, falling back to server:', e);
-            }
+        try {
+            await initProver();
+            proofData = await workerProve(witnessResult.circuit, witnessResult.witness);
+            clientSideProved = true;
+        } catch (e) {
+            console.warn('Client-side proving failed, falling back to server:', e);
         }
         if (!clientSideProved) {
             const resp = await fetch('/api/prove', {

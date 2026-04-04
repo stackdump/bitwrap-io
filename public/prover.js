@@ -1,19 +1,57 @@
-// bitwrap WASM prover — client-side Groth16 proving
-// Loads prover.wasm and exposes async API over bitwrapProver global
+// bitwrap WASM prover — runs Groth16 proving in a Web Worker to avoid blocking UI.
+// Falls back to main-thread execution if Workers are unavailable.
 
-let _ready = null;
+let _worker = null;
+let _pending = {};
+let _msgId = 0;
 let _keyCache = {};
+let _initPromise = null;
 
-// Initialize the WASM prover. Call once, awaits loading.
-export async function initProver(wasmUrl = './prover.wasm', execUrl = './wasm_exec.js') {
-  if (_ready) return _ready;
+function sendWorkerMessage(type, payload) {
+  return new Promise((resolve, reject) => {
+    const id = ++_msgId;
+    _pending[id] = { resolve, reject };
+    _worker.postMessage({ id, type, payload });
+  });
+}
 
-  _ready = (async () => {
-    // Load wasm_exec.js if Go runtime not present
+// Initialize the prover (Web Worker with WASM).
+export async function initProver() {
+  if (_initPromise) return _initPromise;
+
+  _initPromise = (async () => {
+    if (typeof Worker !== 'undefined') {
+      try {
+        _worker = new Worker('./prover-worker.js');
+        _worker.onmessage = (e) => {
+          const { id, type, result, error } = e.data;
+          if (id && _pending[id]) {
+            if (type === 'error') {
+              _pending[id].reject(new Error(error));
+            } else {
+              _pending[id].resolve(result);
+            }
+            delete _pending[id];
+          }
+        };
+        _worker.onerror = (e) => {
+          console.warn('Prover worker error, falling back to main thread:', e.message);
+          _worker = null;
+        };
+        // Give the worker a moment to initialize
+        await new Promise(r => setTimeout(r, 100));
+        return;
+      } catch (e) {
+        console.warn('Worker creation failed, falling back to main thread:', e);
+        _worker = null;
+      }
+    }
+
+    // Fallback: load on main thread (blocks UI during prove)
     if (typeof Go === 'undefined') {
       await new Promise((resolve, reject) => {
         const script = document.createElement('script');
-        script.src = execUrl;
+        script.src = './wasm_exec.js';
         script.onload = resolve;
         script.onerror = () => reject(new Error('Failed to load wasm_exec.js'));
         document.head.appendChild(script);
@@ -21,10 +59,9 @@ export async function initProver(wasmUrl = './prover.wasm', execUrl = './wasm_ex
     }
 
     const go = new Go();
-    const result = await WebAssembly.instantiateStreaming(fetch(wasmUrl), go.importObject);
-    go.run(result.instance); // starts the Go main() goroutine
+    const result = await WebAssembly.instantiateStreaming(fetch('./prover.wasm'), go.importObject);
+    go.run(result.instance);
 
-    // Wait for bitwrapProver to be set
     for (let i = 0; i < 100; i++) {
       if (typeof bitwrapProver !== 'undefined') return;
       await new Promise(r => setTimeout(r, 50));
@@ -32,23 +69,21 @@ export async function initProver(wasmUrl = './prover.wasm', execUrl = './wasm_ex
     throw new Error('WASM prover did not initialize');
   })();
 
-  return _ready;
+  return _initPromise;
 }
 
-// Compile a circuit from scratch (slow — runs trusted setup in WASM).
-// Returns { constraints, publicVars, privateVars } or throws.
 export async function compileCircuit(name) {
   await initProver();
+  if (_worker) {
+    return sendWorkerMessage('compileCircuit', { name });
+  }
   const result = bitwrapProver.compileCircuit(name);
   if (result.error) throw new Error(result.error);
   return result;
 }
 
-// Load pre-compiled keys from the server (fast — skips compilation).
-// Fetches .cs, .pk, .vk from keyUrl/{name}.cs etc.
 export async function loadKeys(name, keyUrl) {
   await initProver();
-
   if (_keyCache[name]) return _keyCache[name];
 
   const [csResp, pkResp, vkResp] = await Promise.all([
@@ -67,40 +102,53 @@ export async function loadKeys(name, keyUrl) {
     vkResp.arrayBuffer().then(b => new Uint8Array(b)),
   ]);
 
+  if (_worker) {
+    const result = await sendWorkerMessage('loadKeys', { name, csBytes, pkBytes, vkBytes });
+    _keyCache[name] = result;
+    return result;
+  }
+
   const result = bitwrapProver.loadKeys(name, csBytes, pkBytes, vkBytes);
   if (result.error) throw new Error(result.error);
   _keyCache[name] = result;
   return result;
 }
 
-// Generate a Groth16 proof. Returns { proof: Uint8Array, publicWitness: Uint8Array }.
-// witness is an object with string keys and string values (decimal field elements).
+// Generate a Groth16 proof — runs in Web Worker (non-blocking).
 export async function prove(circuitName, witness) {
   await initProver();
+  if (_worker) {
+    return sendWorkerMessage('prove', { circuit: circuitName, witness });
+  }
+  // Fallback: main thread (will block UI)
   const result = bitwrapProver.prove(circuitName, JSON.stringify(witness));
   if (result.error) throw new Error(result.error);
-  return {
-    proof: result.proof,
-    publicWitness: result.publicWitness,
-  };
+  return { proof: result.proof, publicWitness: result.publicWitness };
 }
 
-// Verify a proof. Returns { valid: boolean, error?: string }.
 export async function verify(circuitName, proof, publicWitness) {
   await initProver();
+  if (_worker) {
+    return sendWorkerMessage('verify', { circuit: circuitName, proof, publicWitness });
+  }
   return bitwrapProver.verify(circuitName, proof, publicWitness);
 }
 
-// Compute MiMC hash (convenience — also available in mimc.js without WASM).
 export async function mimcHash(...args) {
   await initProver();
+  if (_worker) {
+    const result = await sendWorkerMessage('mimcHash', { args: args.map(String) });
+    return BigInt(result);
+  }
   const result = bitwrapProver.mimcHash(...args.map(String));
   if (typeof result === 'object' && result.error) throw new Error(result.error);
   return BigInt(result);
 }
 
-// List loaded circuits.
 export async function listCircuits() {
   await initProver();
+  if (_worker) {
+    return sendWorkerMessage('listCircuits', {});
+  }
   return bitwrapProver.listCircuits();
 }
