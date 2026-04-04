@@ -335,6 +335,60 @@ function downloadFile(filename, content) {
     URL.revokeObjectURL(url);
 }
 
+// Convert metamodel format (states/actions/arcs) to pflow.xyz format (places/transitions)
+// with auto-generated circular layout positions.
+function metamodelToPflow(schema) {
+    const places = {};
+    const transitions = {};
+    const states = schema.states || [];
+    const actions = schema.actions || [];
+    const arcs = schema.arcs || [];
+    const total = states.length + actions.length;
+    const radius = Math.max(120, total * 30);
+    const cx = 300, cy = 250;
+
+    states.forEach((s, i) => {
+        const angle = (2 * Math.PI * i) / total;
+        places[s.id] = {
+            x: Math.round(cx + radius * Math.cos(angle)),
+            y: Math.round(cy + radius * Math.sin(angle)),
+            initial: typeof s.initial === 'number' ? s.initial : 0,
+        };
+    });
+
+    actions.forEach((a, i) => {
+        const angle = (2 * Math.PI * (i + states.length)) / total;
+        transitions[a.id] = {
+            x: Math.round(cx + radius * Math.cos(angle)),
+            y: Math.round(cy + radius * Math.sin(angle)),
+        };
+    });
+
+    const pflowArcs = arcs.map(a => ({
+        source: a.source,
+        target: a.target,
+        weight: [1],
+        inhibitTransition: false,
+        '@type': 'Arrow',
+        ...(a.keys && a.keys.length ? { keys: a.keys } : {}),
+        ...(a.value ? { value: a.value } : {}),
+    }));
+
+    return {
+        '@context': 'https://pflow.xyz/schema',
+        '@type': 'PetriNet',
+        '@version': '1.1',
+        name: schema.name || 'Model',
+        version: schema.version || '1.0.0',
+        token: ['https://pflow.xyz/tokens/black'],
+        places,
+        transitions,
+        arcs: pflowArcs,
+        ...(schema.events ? { events: schema.events } : {}),
+        ...(schema.constraints ? { constraints: schema.constraints } : {}),
+    };
+}
+
 // Load model from URL params on page load
 (function() {
     const params = new URLSearchParams(window.location.search);
@@ -369,7 +423,7 @@ function downloadFile(filename, content) {
                 .then(r => r.ok ? r.json() : null)
                 .then(data => {
                     if (data && petriView && petriView.setModel) {
-                        petriView.setModel(data);
+                        petriView.setModel(metamodelToPflow(data));
                     }
                 })
                 .catch(err => console.error('Failed to load template:', err));
