@@ -398,40 +398,80 @@ function injectPollChoices(model, poll) {
     const m = JSON.parse(JSON.stringify(model)); // deep clone
     const choices = poll.choices;
 
-    // Remove the generic "tallies" place
+    // Remove the generic castVote transition and tallies place
+    delete m.transitions['castVote'];
     delete m.places['tallies'];
 
-    // Add a place for each choice, arranged in a row below castVote
-    const castVote = m.transitions['castVote'] || { x: 300, y: 50 };
-    const startX = castVote.x - ((choices.length - 1) * 80) / 2;
+    // Remove all arcs involving castVote or tallies
+    m.arcs = m.arcs.filter(a =>
+        a.source !== 'castVote' && a.target !== 'castVote' &&
+        a.source !== 'tallies' && a.target !== 'tallies'
+    );
+
+    // Layout: choices fan out from a central point
+    const cx = 300, topY = 40;
+    const spacing = Math.max(120, 400 / choices.length);
+    const startX = cx - ((choices.length - 1) * spacing) / 2;
 
     choices.forEach((name, i) => {
-        const placeId = 'tally:' + name;
-        m.places[placeId] = {
-            x: Math.round(startX + i * 80),
-            y: castVote.y + 180,
+        const x = Math.round(startX + i * spacing);
+
+        // Each choice gets its own vote transition (square)
+        m.transitions['vote:' + name] = {
+            x: x,
+            y: topY,
+            '@type': 'Transition',
+        };
+
+        // Each choice gets its own tally place (circle)
+        m.places['tally:' + name] = {
+            x: x,
+            y: topY + 140,
             initial: [0],
             '@type': 'Place',
             offset: 0,
             capacity: [null],
         };
-    });
 
-    // Replace castVote→tallies arc with one arc per choice
-    m.arcs = m.arcs.filter(a => !(a.source === 'castVote' && a.target === 'tallies'));
-    choices.forEach((name) => {
+        // vote:choice → tally:choice (records the vote)
         m.arcs.push({
-            source: 'castVote',
+            source: 'vote:' + name,
             target: 'tally:' + name,
+            weight: [1],
+            inhibitTransition: false,
+            '@type': 'Arrow',
+        });
+
+        // vote:choice → nullifiers (prevents double voting)
+        m.arcs.push({
+            source: 'vote:' + name,
+            target: 'nullifiers',
             weight: [1],
             inhibitTransition: false,
             '@type': 'Arrow',
         });
     });
 
-    // Update model name to poll title
-    m.name = poll.title || m.name;
+    // Reposition remaining places below the choices
+    const bottomY = topY + 300;
+    const remaining = Object.keys(m.places).filter(k => !k.startsWith('tally:'));
+    remaining.forEach((id, i) => {
+        const rx = Math.round(cx - ((remaining.length - 1) * 100) / 2 + i * 100);
+        m.places[id].x = rx;
+        m.places[id].y = bottomY;
+    });
 
+    // Reposition createPoll and closePoll
+    if (m.transitions['createPoll']) {
+        m.transitions['createPoll'].x = cx - 150;
+        m.transitions['createPoll'].y = bottomY - 80;
+    }
+    if (m.transitions['closePoll']) {
+        m.transitions['closePoll'].x = cx + 150;
+        m.transitions['closePoll'].y = bottomY - 80;
+    }
+
+    m.name = poll.title || m.name;
     return m;
 }
 
