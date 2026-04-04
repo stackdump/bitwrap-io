@@ -389,6 +389,52 @@ function metamodelToPflow(schema) {
     };
 }
 
+// Inject poll-specific choices into the generic vote template model.
+// Replaces the abstract "tallies" place with one place per choice,
+// and fans out the castVote→tallies arc to each choice place.
+function injectPollChoices(model, poll) {
+    if (!poll.choices || poll.choices.length === 0) return model;
+
+    const m = JSON.parse(JSON.stringify(model)); // deep clone
+    const choices = poll.choices;
+
+    // Remove the generic "tallies" place
+    delete m.places['tallies'];
+
+    // Add a place for each choice, arranged in a row below castVote
+    const castVote = m.transitions['castVote'] || { x: 300, y: 50 };
+    const startX = castVote.x - ((choices.length - 1) * 80) / 2;
+
+    choices.forEach((name, i) => {
+        const placeId = 'tally:' + name;
+        m.places[placeId] = {
+            x: Math.round(startX + i * 80),
+            y: castVote.y + 180,
+            initial: [0],
+            '@type': 'Place',
+            offset: 0,
+            capacity: [null],
+        };
+    });
+
+    // Replace castVote→tallies arc with one arc per choice
+    m.arcs = m.arcs.filter(a => !(a.source === 'castVote' && a.target === 'tallies'));
+    choices.forEach((name) => {
+        m.arcs.push({
+            source: 'castVote',
+            target: 'tally:' + name,
+            weight: [1],
+            inhibitTransition: false,
+            '@type': 'Arrow',
+        });
+    });
+
+    // Update model name to poll title
+    m.name = poll.title || m.name;
+
+    return m;
+}
+
 // Load model from URL params on page load
 (function() {
     const params = new URLSearchParams(window.location.search);
@@ -417,39 +463,48 @@ function metamodelToPflow(schema) {
     // Load by template: /editor?template=<id>&poll=<pollId>
     const template = params.get('template');
     if (template) {
-        // Wait for petri-view custom element to be ready before loading
-        const loadTemplate = () => {
-            fetch('/api/templates/' + template)
-                .then(r => r.ok ? r.json() : null)
-                .then(data => {
-                    if (data && petriView && petriView.setModel) {
-                        petriView.setModel(metamodelToPflow(data));
-                    }
-                })
-                .catch(err => console.error('Failed to load template:', err));
-        };
-        if (petriView && petriView.setModel) {
-            loadTemplate();
-        } else if (customElements) {
-            customElements.whenDefined('petri-view').then(loadTemplate);
-        }
-
-        // If a poll ID is provided, show poll info in the toolbar
         const pollId = params.get('poll');
-        if (pollId) {
-            fetch('/api/polls/' + pollId)
-                .then(r => r.ok ? r.json() : null)
-                .then(data => {
-                    if (data && data.poll) {
-                        const poll = data.poll;
-                        const info = document.createElement('span');
-                        info.style.cssText = 'color:#aaa;font-size:13px;margin-left:12px;';
-                        info.textContent = `${poll.title} (${poll.status})`;
-                        const toolbar = document.querySelector('.toolbar, nav') || document.body;
-                        toolbar.appendChild(info);
+
+        const loadModel = async () => {
+            try {
+                const tmplResp = await fetch('/api/templates/' + template);
+                if (!tmplResp.ok) return;
+                const tmplData = await tmplResp.json();
+                let model = metamodelToPflow(tmplData);
+
+                // If a poll ID is provided, customize the model with poll-specific data
+                if (pollId) {
+                    try {
+                        const pollResp = await fetch('/api/polls/' + pollId);
+                        if (pollResp.ok) {
+                            const pollData = await pollResp.json();
+                            const poll = pollData.poll || pollData;
+                            model = injectPollChoices(model, poll);
+
+                            // Show poll info in toolbar
+                            const info = document.createElement('span');
+                            info.style.cssText = 'color:#aaa;font-size:13px;margin-left:12px;';
+                            info.textContent = `${poll.title} (${poll.status})`;
+                            const toolbar = document.querySelector('.toolbar, nav') || document.body;
+                            toolbar.appendChild(info);
+                        }
+                    } catch (e) {
+                        console.warn('Failed to load poll data:', e);
                     }
-                })
-                .catch(() => {});
+                }
+
+                if (petriView && petriView.setModel) {
+                    petriView.setModel(model);
+                }
+            } catch (err) {
+                console.error('Failed to load template:', err);
+            }
+        };
+
+        if (petriView && petriView.setModel) {
+            loadModel();
+        } else if (customElements) {
+            customElements.whenDefined('petri-view').then(loadModel);
         }
         return;
     }
