@@ -141,7 +141,7 @@ jobs:
         run: make build
 
       - name: Install Playwright
-        run: cd e2e && npm ci && npx playwright install chromium --with-deps
+        run: cd e2e && npm install && npx playwright install chromium --with-deps
 
       - name: Start server
         run: ./bitwrap -port 8088 -dev -no-prover &
