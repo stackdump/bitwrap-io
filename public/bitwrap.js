@@ -342,28 +342,43 @@ function downloadFile(filename, content) {
     // Load by CID: /editor?cid=<cid>
     const cid = params.get('cid');
     if (cid) {
-        fetch('/o/' + cid)
-            .then(r => r.ok ? r.json() : null)
-            .then(data => {
-                if (data && petriView && petriView.loadModel) {
-                    petriView.loadModel(data);
-                }
-            })
-            .catch(err => console.error('Failed to load model:', err));
+        const loadCid = () => {
+            fetch('/o/' + cid)
+                .then(r => r.ok ? r.json() : null)
+                .then(data => {
+                    if (data && petriView && petriView.loadModel) {
+                        petriView.loadModel(data);
+                    }
+                })
+                .catch(err => console.error('Failed to load model:', err));
+        };
+        if (petriView && petriView.loadModel) {
+            loadCid();
+        } else if (customElements) {
+            customElements.whenDefined('petri-view').then(loadCid);
+        }
         return;
     }
 
     // Load by template: /editor?template=<id>&poll=<pollId>
     const template = params.get('template');
     if (template) {
-        fetch('/api/templates/' + template)
-            .then(r => r.ok ? r.json() : null)
-            .then(data => {
-                if (data && petriView && petriView.loadModel) {
-                    petriView.loadModel(data);
-                }
-            })
-            .catch(err => console.error('Failed to load template:', err));
+        // Wait for petri-view custom element to be ready before loading
+        const loadTemplate = () => {
+            fetch('/api/templates/' + template)
+                .then(r => r.ok ? r.json() : null)
+                .then(data => {
+                    if (data && petriView && petriView.loadModel) {
+                        petriView.loadModel(data);
+                    }
+                })
+                .catch(err => console.error('Failed to load template:', err));
+        };
+        if (petriView && petriView.loadModel) {
+            loadTemplate();
+        } else if (customElements) {
+            customElements.whenDefined('petri-view').then(loadTemplate);
+        }
 
         // If a poll ID is provided, show poll info in the toolbar
         const pollId = params.get('poll');
