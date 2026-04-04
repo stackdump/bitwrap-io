@@ -77,12 +77,7 @@ func (s *Server) handleCreatePoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sigMsg := "bitwrap-create-poll:" + req.Title
-	recovered, err := RecoverAddress(sigMsg, req.Signature)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("signature verification failed: %v", err), http.StatusForbidden)
-		return
-	}
-	if !strings.EqualFold(recovered, req.Creator) {
+	if !VerifySignature(sigMsg, req.Signature, req.Creator) {
 		http.Error(w, "signature does not match creator address", http.StatusForbidden)
 		return
 	}
@@ -403,12 +398,7 @@ func (s *Server) handleClosePoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sigMsg := "bitwrap-close-poll:" + pollID
-	recovered, err := RecoverAddress(sigMsg, req.Signature)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("signature verification failed: %v", err), http.StatusForbidden)
-		return
-	}
-	if !strings.EqualFold(recovered, poll.Creator) {
+	if !VerifySignature(sigMsg, req.Signature, poll.Creator) {
 		http.Error(w, "only the poll creator can close it", http.StatusForbidden)
 		return
 	}

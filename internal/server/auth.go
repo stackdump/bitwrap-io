@@ -162,28 +162,76 @@ func RecoverAddress(message string, signature string) (string, error) {
 	s := new(big.Int).SetBytes(sig[32:64])
 	v := sig[64]
 
+	// Normalize v: wallets use 0/1 or 27/28 (EIP-155 uses chainId*2+35+v)
 	if v >= 27 {
 		v -= 27
 	}
 	if v > 1 {
-		return "", errors.New("invalid signature recovery id")
+		v = v % 2 // handle EIP-155 recovery ids
 	}
 
-	pubX, pubY, err := ecRecover(hash, r, s, v)
-	if err != nil {
-		return "", fmt.Errorf("public key recovery failed: %w", err)
+	// Try both recovery parities. Wallets encode v differently (0/1, 27/28,
+	// EIP-155 chainId*2+35+v), so we try both and return all valid candidates.
+	var addrs []string
+	for _, tryV := range []byte{0, 1} {
+		pubX, pubY, err := ecRecover(hash, r, s, tryV)
+		if err != nil {
+			continue
+		}
+
+		pubBytes := make([]byte, 65)
+		pubBytes[0] = 0x04
+		xBytes := pubX.Bytes()
+		yBytes := pubY.Bytes()
+		copy(pubBytes[1+32-len(xBytes):33], xBytes)
+		copy(pubBytes[33+32-len(yBytes):65], yBytes)
+
+		addr := "0x" + hex.EncodeToString(keccak256(pubBytes[1:])[12:])
+		addrs = append(addrs, addr)
 	}
 
-	// Derive Ethereum address: keccak256(uncompressed_pubkey[1:])
-	pubBytes := make([]byte, 65)
-	pubBytes[0] = 0x04
-	xBytes := pubX.Bytes()
-	yBytes := pubY.Bytes()
-	copy(pubBytes[1+32-len(xBytes):33], xBytes)
-	copy(pubBytes[33+32-len(yBytes):65], yBytes)
+	if len(addrs) == 0 {
+		return "", errors.New("public key recovery failed for both parities")
+	}
+	// Return the preferred parity's address
+	if int(v) < len(addrs) {
+		return addrs[v], nil
+	}
+	return addrs[0], nil
+}
 
-	addr := keccak256(pubBytes[1:])
-	return "0x" + hex.EncodeToString(addr[12:]), nil
+// VerifySignature checks if a message was signed by the given address.
+// Tries both recovery parities to handle different wallet v-encodings.
+func VerifySignature(message, signature, expectedAddress string) bool {
+	sig, err := hex.DecodeString(strings.TrimPrefix(signature, "0x"))
+	if err != nil || len(sig) != 65 {
+		return false
+	}
+
+	prefix := fmt.Sprintf("\x19Ethereum Signed Message:\n%d", len(message))
+	hash := keccak256(append([]byte(prefix), []byte(message)...))
+	r := new(big.Int).SetBytes(sig[:32])
+	s := new(big.Int).SetBytes(sig[32:64])
+
+	for _, v := range []byte{0, 1} {
+		pubX, pubY, err := ecRecover(hash, r, s, v)
+		if err != nil {
+			continue
+		}
+
+		pubBytes := make([]byte, 65)
+		pubBytes[0] = 0x04
+		xBytes := pubX.Bytes()
+		yBytes := pubY.Bytes()
+		copy(pubBytes[1+32-len(xBytes):33], xBytes)
+		copy(pubBytes[33+32-len(yBytes):65], yBytes)
+
+		addr := "0x" + hex.EncodeToString(keccak256(pubBytes[1:])[12:])
+		if strings.EqualFold(addr, expectedAddress) {
+			return true
+		}
+	}
+	return false
 }
 
 // ecRecover recovers the public key from an ECDSA signature on secp256k1.
