@@ -501,16 +501,21 @@ function injectPollChoices(model, poll) {
         weight: [1], inhibitTransition: false, '@type': 'Arrow',
     });
 
-    // Wire pollConfig → each vote transition (read arc: poll must be active to vote)
-    // Use inhibitor-like pattern: vote needs pollConfig >= 1
+    // Wire pollConfig ↔ each vote transition (read arc: poll must be active)
+    // Wire voterRegistry → each vote transition (consumes: must be registered)
     choices.forEach((name) => {
+        // pollConfig read arc (borrow + return)
         m.arcs.push({
             source: 'pollConfig', target: 'vote:' + name,
             weight: [1], inhibitTransition: false, '@type': 'Arrow',
         });
-        // Return the token (read arc — doesn't consume)
         m.arcs.push({
             source: 'vote:' + name, target: 'pollConfig',
+            weight: [1], inhibitTransition: false, '@type': 'Arrow',
+        });
+        // voterRegistry → vote (consumes a registration token per vote)
+        m.arcs.push({
+            source: 'voterRegistry', target: 'vote:' + name,
             weight: [1], inhibitTransition: false, '@type': 'Arrow',
         });
     });
