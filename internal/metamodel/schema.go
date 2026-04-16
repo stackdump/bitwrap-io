@@ -36,6 +36,17 @@ type State struct {
 
 	// Exported states are bound across schemas via external bindings.
 	Exported bool `json:"exported,omitempty"`
+
+	// MerkleDepth is the binary tree depth for this state when accessed as
+	// a keyed map in ZK circuits. 0 means this state is not Merkle-backed
+	// (e.g., scalar values, or data accessed without membership proofs).
+	// Used by the circuit synthesizer in prover/synth/.
+	MerkleDepth int `json:"merkle_depth,omitempty"`
+
+	// HashFunc names the hash function used for this state's commitments
+	// (Merkle tree hashing, leaf encoding). Empty defaults to "mimc-bn254",
+	// which is what all hand-written circuits currently use.
+	HashFunc string `json:"hash_func,omitempty"`
 }
 
 // IsToken returns true if this is a token-counting state.
@@ -80,6 +91,45 @@ type Action struct {
 	// e.g., {"from": "sender"} if event uses "from" but action uses "sender".
 	// If empty, event parameter names are used directly.
 	EventBindings map[string]string `json:"event_bindings,omitempty"`
+
+	// Roles names caller identities the action requires. Each role maps to a
+	// `caller == <role>` equality constraint the synthesizer emits. Example:
+	// mint requires ["minter"]; a ZK circuit asserts the caller public input
+	// equals the minter private input (which ties to on-chain access control).
+	Roles []string `json:"roles,omitempty"`
+
+	// ZKOps are cryptographic obligations that aren't arc-expressible —
+	// nullifier derivation, commitment binding, explicit range checks.
+	// The synthesizer emits these as gnark constraints in the order given.
+	ZKOps []ZKOp `json:"zk_ops,omitempty"`
+}
+
+// ZKOpKind is the discriminator for ZKOp variants.
+type ZKOpKind string
+
+const (
+	// ZKOpNullifierBind asserts Output == hash(Inputs...). Typical use:
+	// `{Kind: NullifierBind, Inputs: [voterSecret, pollId], Output: nullifier}`.
+	ZKOpNullifierBind ZKOpKind = "nullifier_bind"
+
+	// ZKOpCommitmentBind asserts Output == hash(Inputs...) with the same
+	// semantics as NullifierBind, but named for clarity when the hash
+	// hides a value (vote choice, sealed bid, etc.) rather than binding
+	// a unique derivation.
+	ZKOpCommitmentBind ZKOpKind = "commitment_bind"
+
+	// ZKOpRangeCheck asserts BitSize-wide unsigned range on a field
+	// (0 <= field < 2^BitSize). Used for amounts, vote choice bounds, etc.
+	ZKOpRangeCheck ZKOpKind = "range_check"
+)
+
+// ZKOp is a single cryptographic obligation emitted by the synthesizer.
+// Keep this type flat (no interfaces) for easy JSON round-tripping.
+type ZKOp struct {
+	Kind    ZKOpKind `json:"kind"`
+	Inputs  []string `json:"inputs,omitempty"`   // field names feeding into the op
+	Output  string   `json:"output,omitempty"`   // field name the op binds (for hash ops)
+	BitSize int      `json:"bit_size,omitempty"` // for range_check (e.g., 65 for Transfer amount)
 }
 
 // Arc connects states and actions, defining state transformation flow.
