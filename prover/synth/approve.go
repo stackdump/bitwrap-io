@@ -20,8 +20,7 @@ func init() {
 // Requires Action.Roles = ["owner"] in the schema so the synthesizer
 // knows which role to bind.
 func generateApprove(body *strings.Builder, schema *metamodel.Schema, action *metamodel.Action, imports map[string]bool) error {
-	imports["github.com/consensys/gnark/std/hash/mimc"] = true
-
+	_ = imports // mimc helper lives in prover/synth_runtime.go
 	if !slices.Contains(action.Roles, "owner") {
 		return fmt.Errorf("approve synth: action %q must declare Roles=[owner] (got %v)", action.ID, action.Roles)
 	}

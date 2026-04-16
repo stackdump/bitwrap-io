@@ -40,6 +40,7 @@ test-e2e-wallet: build
 # See prover/synth/ for the generator.
 gen-circuits: build
 	./bitwrap -synthesize erc020 -output prover/erc020_gen.go
+	./bitwrap -synthesize erc05725 -output prover/erc05725_gen.go
 
 clean:
 	rm -f bitwrap public/prover.wasm public/wasm_exec.js

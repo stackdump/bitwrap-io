@@ -25,7 +25,7 @@ func init() {
 // PreStateRoot is declared public but unused (matches hand-written version
 // exactly — removing it would change the verifying key).
 func generateMint(body *strings.Builder, schema *metamodel.Schema, action *metamodel.Action, imports map[string]bool) error {
-	imports["github.com/consensys/gnark/std/hash/mimc"] = true
+	_ = imports // mimc helper now lives in prover/synth_runtime.go
 
 	// Role check for minter — only emit if declared in schema metadata.
 	if !slices.Contains(action.Roles, "minter") {

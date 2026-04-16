@@ -45,16 +45,19 @@ func NewERC05725(name, symbol, payoutToken string) *ERC05725 {
 		Type: "address",
 	})
 	schema.AddState(metamodel.State{
-		ID:   "schedules",
-		Type: "map[uint256]VestingSchedule",
+		ID:          "schedules",
+		Type:        "map[uint256]VestingSchedule",
+		MerkleDepth: 10,
 	})
 	schema.AddState(metamodel.State{
-		ID:   "owners",
-		Type: "map[uint256]address",
+		ID:          "owners",
+		Type:        "map[uint256]address",
+		MerkleDepth: 10,
 	})
 	schema.AddState(metamodel.State{
-		ID:   "claimed",
-		Type: "map[uint256]uint256",
+		ID:          "claimed",
+		Type:        "map[uint256]uint256",
+		MerkleDepth: 10,
 	})
 	schema.AddState(metamodel.State{
 		ID:   "creators",
@@ -80,6 +83,12 @@ func NewERC05725(name, symbol, payoutToken string) *ERC05725 {
 		ID:      "claim",
 		Guard:   "vestedAmount(tokenId) > claimed[tokenId]",
 		EventID: "VestClaim",
+		Roles:   []string{"owner"},
+		// Guard uses vestedAmount() which the extractor can't compile,
+		// so the range check is declared explicitly as a ZKOp.
+		ZKOps: []metamodel.ZKOp{
+			{Kind: metamodel.ZKOpRangeCheck, Inputs: []string{"claimAmount"}, BitSize: 64},
+		},
 	})
 	schema.AddAction(metamodel.Action{
 		ID:      "transfer",

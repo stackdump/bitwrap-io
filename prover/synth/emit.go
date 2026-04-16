@@ -67,19 +67,11 @@ func emitMimcHashCall(b *strings.Builder, name, a, bExpr string) {
 	b.WriteString(fmt.Sprintf("\t%s := synthMimcHash(api, %s, %s)\n", name, a, bExpr))
 }
 
-// emitMimcHelper writes the package-level MiMC hash helper. Call exactly
-// once per generated file (tracked by hasMimcHelper flag in emitted output).
+// emitMimcHelper is a no-op retained for call-site compatibility. The
+// MiMC helper now lives in hand-written prover/synth_runtime.go so the
+// gen files can share it without multi-file declaration collisions.
 func emitMimcHelper(b *strings.Builder) {
-	b.WriteString(`// synthMimcHash hashes two field elements with MiMC-BN254.
-// Package-local helper so generated circuits don't collide with prover/circuits.go.
-func synthMimcHash(api frontend.API, a, b frontend.Variable) frontend.Variable {
-	h, _ := mimc.NewMiMC(api)
-	h.Write(a)
-	h.Write(b)
-	return h.Sum()
-}
-
-`)
+	// intentional no-op
 }
 
 // emitMerkleMembership writes the gnark loop that walks a fixed-depth binary

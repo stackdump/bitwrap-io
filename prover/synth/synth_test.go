@@ -249,6 +249,28 @@ func TestTransferSynthSameConstraintCount(t *testing.T) {
 		b.Constraints, b.PublicVars, b.PrivateVars)
 }
 
+func TestVestingClaimSynthSameConstraintCount(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping compile test in short mode")
+	}
+	p := prover.NewProver()
+	a, err := p.CompileCircuit("vestClaim", &prover.VestingClaimCircuit{})
+	if err != nil {
+		t.Fatalf("compile VestingClaimCircuit: %v", err)
+	}
+	b, err := p.CompileCircuit("vestClaimSynth", &prover.VestingClaimSynthCircuit{})
+	if err != nil {
+		t.Fatalf("compile VestingClaimSynthCircuit: %v", err)
+	}
+	if a.Constraints != b.Constraints || a.PublicVars != b.PublicVars || a.PrivateVars != b.PrivateVars {
+		t.Errorf("vestClaim parity failed: hand=%d/%d/%d synth=%d/%d/%d",
+			a.Constraints, a.PublicVars, a.PrivateVars,
+			b.Constraints, b.PublicVars, b.PrivateVars)
+	}
+	t.Logf("both vestClaim circuits: %d constraints, %d public, %d private",
+		b.Constraints, b.PublicVars, b.PrivateVars)
+}
+
 func TestBurnSynthSameConstraintCount(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping compile test in short mode")

@@ -22,8 +22,7 @@ func init() {
 // Reads State.MerkleDepth on "balances" (default 20 if unset so existing
 // schemas still work).
 func generateBurn(body *strings.Builder, schema *metamodel.Schema, action *metamodel.Action, imports map[string]bool) error {
-	imports["github.com/consensys/gnark/std/hash/mimc"] = true
-
+	_ = imports // mimc helper lives in prover/synth_runtime.go
 	balances := schema.StateByID("balances")
 	if balances == nil {
 		return fmt.Errorf("burn synth: schema missing 'balances' state")

@@ -5,17 +5,7 @@ package prover
 
 import (
 	"github.com/consensys/gnark/frontend"
-	"github.com/consensys/gnark/std/hash/mimc"
 )
-
-// synthMimcHash hashes two field elements with MiMC-BN254.
-// Package-local helper so generated circuits don't collide with prover/circuits.go.
-func synthMimcHash(api frontend.API, a, b frontend.Variable) frontend.Variable {
-	h, _ := mimc.NewMiMC(api)
-	h.Write(a)
-	h.Write(b)
-	return h.Sum()
-}
 
 // TransferSynthCircuit is generated from schema action "transfer". Parity target: TransferCircuit in prover/circuits.go.
 type TransferSynthCircuit struct {

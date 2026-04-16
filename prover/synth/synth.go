@@ -43,6 +43,12 @@ func Generate(schema *metamodel.Schema, pkg string) (string, error) {
 		if gen == nil {
 			continue
 		}
+		if !supportsSchema(action.ID, schema) {
+			// Action-name collision across schemas (e.g. ERC-20 "transfer"
+			// on balances vs ERC-5725 "transfer" on vesting NFTs). Silently
+			// skip when the shape doesn't match.
+			continue
+		}
 		if err := gen(&body, schema, action, imports); err != nil {
 			return "", fmt.Errorf("synth: generating %q: %w", action.ID, err)
 		}
@@ -92,6 +98,21 @@ func register(actionID string, gen generator) {
 		panic(fmt.Sprintf("synth: duplicate generator for action %q", actionID))
 	}
 	registry[actionID] = gen
+}
+
+// supportsSchema returns true if the named action's generator can handle the
+// given schema. Used to skip action-name collisions between template families.
+func supportsSchema(actionID string, schema *metamodel.Schema) bool {
+	switch actionID {
+	case "mint", "burn", "transfer", "transferFrom":
+		return schema.StateByID("balances") != nil
+	case "approve":
+		return schema.StateByID("allowances") != nil
+	case "claim":
+		return schema.StateByID("schedules") != nil && schema.StateByID("owners") != nil
+	default:
+		return true
+	}
 }
 
 func sortedKeys(m map[string]bool) []string {
