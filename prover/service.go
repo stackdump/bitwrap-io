@@ -15,41 +15,51 @@ type ArcnetWitnessFactory struct{}
 // CreateAssignment implements goprover.WitnessFactory.
 func (f *ArcnetWitnessFactory) CreateAssignment(circuitName string, witness map[string]string) (frontend.Circuit, error) {
 	switch circuitName {
-	case "transfer":
-		assignment := &TransferCircuit{}
+	case "transfer", "transferSynth":
 		var err error
-		if assignment.PreStateRoot, err = goprover.ParseWitnessField(witness, "preStateRoot"); err != nil {
+		var pre, post, from, to, amount, balanceFrom, balanceTo frontend.Variable
+		var pathElems, pathIdx [20]frontend.Variable
+		if pre, err = goprover.ParseWitnessField(witness, "preStateRoot"); err != nil {
 			return nil, err
 		}
-		if assignment.PostStateRoot, err = goprover.ParseWitnessField(witness, "postStateRoot"); err != nil {
+		if post, err = goprover.ParseWitnessField(witness, "postStateRoot"); err != nil {
 			return nil, err
 		}
-		if assignment.From, err = goprover.ParseWitnessField(witness, "from"); err != nil {
+		if from, err = goprover.ParseWitnessField(witness, "from"); err != nil {
 			return nil, err
 		}
-		if assignment.To, err = goprover.ParseWitnessField(witness, "to"); err != nil {
+		if to, err = goprover.ParseWitnessField(witness, "to"); err != nil {
 			return nil, err
 		}
-		if assignment.Amount, err = goprover.ParseWitnessField(witness, "amount"); err != nil {
+		if amount, err = goprover.ParseWitnessField(witness, "amount"); err != nil {
 			return nil, err
 		}
-		if assignment.BalanceFrom, err = goprover.ParseWitnessField(witness, "balanceFrom"); err != nil {
+		if balanceFrom, err = goprover.ParseWitnessField(witness, "balanceFrom"); err != nil {
 			return nil, err
 		}
-		if assignment.BalanceTo, err = goprover.ParseWitnessField(witness, "balanceTo"); err != nil {
+		if balanceTo, err = goprover.ParseWitnessField(witness, "balanceTo"); err != nil {
 			return nil, err
 		}
 		for i := 0; i < 20; i++ {
-			key := fmt.Sprintf("pathElement%d", i)
-			if assignment.PathElements[i], err = goprover.ParseWitnessField(witness, key); err != nil {
+			if pathElems[i], err = goprover.ParseWitnessField(witness, fmt.Sprintf("pathElement%d", i)); err != nil {
 				return nil, err
 			}
-			key = fmt.Sprintf("pathIndex%d", i)
-			if assignment.PathIndices[i], err = goprover.ParseWitnessField(witness, key); err != nil {
+			if pathIdx[i], err = goprover.ParseWitnessField(witness, fmt.Sprintf("pathIndex%d", i)); err != nil {
 				return nil, err
 			}
 		}
-		return assignment, nil
+		if circuitName == "transfer" {
+			return &TransferCircuit{
+				PreStateRoot: pre, PostStateRoot: post, From: from, To: to, Amount: amount,
+				BalanceFrom: balanceFrom, BalanceTo: balanceTo,
+				PathElements: pathElems, PathIndices: pathIdx,
+			}, nil
+		}
+		return &TransferSynthCircuit{
+			PreStateRoot: pre, PostStateRoot: post, From: from, To: to, Amount: amount,
+			BalanceFrom: balanceFrom, BalanceTo: balanceTo,
+			PathElements: pathElems, PathIndices: pathIdx,
+		}, nil
 
 	case "mint", "mintSynth":
 		// Same witness schema for both hand-written and synthesized Mint —

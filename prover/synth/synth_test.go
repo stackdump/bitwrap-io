@@ -177,6 +177,56 @@ func TestBurnSynthParity(t *testing.T) {
 	assert.SolvingFailed(&prover.BurnSynthCircuit{}, overdrawSynth, test.WithCurves(ecc.BN254))
 }
 
+func TestTransferSynthParity(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping parity test in short mode")
+	}
+	assert := test.NewAssert(t)
+	var path20, idx20 [20]frontend.Variable
+	for i := 0; i < 20; i++ {
+		path20[i] = 0
+		idx20[i] = 0
+	}
+
+	// Invalid post root — both reject.
+	tampered := &prover.TransferCircuit{
+		PreStateRoot: 0, PostStateRoot: 12345,
+		From: 1, To: 2, Amount: 5,
+		BalanceFrom: 100, BalanceTo: 0,
+		PathElements: path20, PathIndices: idx20,
+	}
+	tamperedSynth := &prover.TransferSynthCircuit{
+		PreStateRoot: 0, PostStateRoot: 12345,
+		From: 1, To: 2, Amount: 5,
+		BalanceFrom: 100, BalanceTo: 0,
+		PathElements: path20, PathIndices: idx20,
+	}
+	assert.SolvingFailed(&prover.TransferCircuit{}, tampered, test.WithCurves(ecc.BN254))
+	assert.SolvingFailed(&prover.TransferSynthCircuit{}, tamperedSynth, test.WithCurves(ecc.BN254))
+}
+
+func TestTransferSynthSameConstraintCount(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping compile test in short mode")
+	}
+	p := prover.NewProver()
+	a, err := p.CompileCircuit("transfer", &prover.TransferCircuit{})
+	if err != nil {
+		t.Fatalf("compile TransferCircuit: %v", err)
+	}
+	b, err := p.CompileCircuit("transferSynth", &prover.TransferSynthCircuit{})
+	if err != nil {
+		t.Fatalf("compile TransferSynthCircuit: %v", err)
+	}
+	if a.Constraints != b.Constraints || a.PublicVars != b.PublicVars || a.PrivateVars != b.PrivateVars {
+		t.Errorf("transfer parity failed: hand=%d/%d/%d synth=%d/%d/%d",
+			a.Constraints, a.PublicVars, a.PrivateVars,
+			b.Constraints, b.PublicVars, b.PrivateVars)
+	}
+	t.Logf("both transfer circuits: %d constraints, %d public, %d private",
+		b.Constraints, b.PublicVars, b.PrivateVars)
+}
+
 func TestBurnSynthSameConstraintCount(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping compile test in short mode")

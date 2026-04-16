@@ -17,6 +17,47 @@ func synthMimcHash(api frontend.API, a, b frontend.Variable) frontend.Variable {
 	return h.Sum()
 }
 
+// TransferSynthCircuit is generated from schema action "transfer". Parity target: TransferCircuit in prover/circuits.go.
+type TransferSynthCircuit struct {
+	PreStateRoot  frontend.Variable `gnark:",public"`
+	PostStateRoot frontend.Variable `gnark:",public"`
+	From          frontend.Variable `gnark:",public"`
+	To            frontend.Variable `gnark:",public"`
+	Amount        frontend.Variable `gnark:",public"`
+
+	BalanceFrom frontend.Variable
+	BalanceTo   frontend.Variable
+
+	PathElements [20]frontend.Variable
+	PathIndices  [20]frontend.Variable
+}
+
+func (c *TransferSynthCircuit) Define(api frontend.API) error {
+	// Range checks from Action.Guard "balances[from] >= amount && to != address(0)"
+	diff := api.Sub(c.BalanceFrom, c.Amount)
+	api.ToBinary(diff, 64)
+
+	// Merkle membership: balances[from] = BalanceFrom at PreStateRoot
+	leaf := synthMimcHash(api, c.From, c.BalanceFrom)
+	current := leaf
+	for i := 0; i < 20; i++ {
+		api.AssertIsBoolean(c.PathIndices[i])
+		left := api.Select(c.PathIndices[i], c.PathElements[i], current)
+		right := api.Select(c.PathIndices[i], current, c.PathElements[i])
+		current = synthMimcHash(api, left, right)
+	}
+	api.AssertIsEqual(current, c.PreStateRoot)
+
+	// Post-state: composite hash of decremented from + incremented to leaves
+	newBalanceFrom := api.Sub(c.BalanceFrom, c.Amount)
+	newBalanceTo := api.Add(c.BalanceTo, c.Amount)
+	postLeaf := synthMimcHash(api, c.From, newBalanceFrom)
+	postLeaf2 := synthMimcHash(api, c.To, newBalanceTo)
+	computedPost := synthMimcHash(api, postLeaf, postLeaf2)
+	api.AssertIsEqual(computedPost, c.PostStateRoot)
+	return nil
+}
+
 // MintSynthCircuit is generated from schema action "mint". Parity target: MintCircuit in prover/circuits.go.
 type MintSynthCircuit struct {
 	PreStateRoot  frontend.Variable `gnark:",public"`
