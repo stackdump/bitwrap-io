@@ -239,6 +239,27 @@ func (s *Server) handleCastVote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Petri net runtime gate (phase 1): each registerVoter event produces a
+	// voting slot; each castVote event consumes one. Reject once slots
+	// are exhausted. This simulates the voterRegistry→castVote arc without
+	// requiring the full schema rework that phase 2 (circuit synthesis) will
+	// do — the semantics match what the net would enforce if Fire() were
+	// fully wired.
+	events, _ := s.store.ReadEvents(pollID)
+	var regCount, voteCount int
+	for _, ev := range events {
+		switch ev.Action {
+		case "registerVoter":
+			regCount++
+		case "castVote":
+			voteCount++
+		}
+	}
+	if voteCount >= regCount {
+		http.Error(w, "voter registry exhausted — all registration slots have been used", http.StatusConflict)
+		return
+	}
+
 	var req castVoteRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
@@ -643,6 +664,13 @@ func (s *Server) handleRegisterVoter(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to save registration", http.StatusInternalServerError)
 		return
 	}
+
+	// Record as a Petri net event so the runtime can gate castVote on
+	// available registration slots (phase-1 exhaustion check).
+	_ = s.store.AppendEvent(pollID, store.PollEvent{
+		Action:   "registerVoter",
+		Bindings: map[string]string{"commitment": req.Commitment},
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{

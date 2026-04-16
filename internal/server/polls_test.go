@@ -12,9 +12,9 @@ import (
 )
 
 // createTestPoll creates a poll via the store directly (bypasses wallet auth).
-// RegistryRoot is seeded with a dummy value so vote tests don't hit the
-// "register before voting" rejection. Use createTestPollEmptyRegistry to
-// explicitly test the empty-registry path.
+// Seeds a non-empty registry + one registerVoter event so a single vote can
+// pass both the "register before voting" check and the exhaustion gate.
+// For more concurrent voters call registerTestVoter.
 func createTestPoll(t *testing.T, srv *Server, title string, choices []string) string {
 	t.Helper()
 	poll := &store.Poll{
@@ -30,7 +30,16 @@ func createTestPoll(t *testing.T, srv *Server, title string, choices []string) s
 		t.Fatal(err)
 	}
 	_ = srv.store.AppendEvent(poll.ID, store.PollEvent{Action: "createPoll"})
+	_ = srv.store.AppendEvent(poll.ID, store.PollEvent{Action: "registerVoter"})
 	return poll.ID
+}
+
+// registerTestVoter appends an additional registerVoter event so another vote
+// slot becomes available. Tests that cast N votes should register N-1 extra
+// voters after createTestPoll (which already seeds one).
+func registerTestVoter(t *testing.T, srv *Server, pollID string) {
+	t.Helper()
+	_ = srv.store.AppendEvent(pollID, store.PollEvent{Action: "registerVoter"})
 }
 
 func createTestPollEmptyRegistry(t *testing.T, srv *Server, title string, choices []string) string {
@@ -167,6 +176,45 @@ func TestListPolls(t *testing.T) {
 }
 
 // --- Vote tests ---
+
+func TestCastVoteExhaustedRegistry(t *testing.T) {
+	srv := testServer(t)
+	// createTestPoll seeds one registerVoter event → one vote slot.
+	pollID := createTestPoll(t, srv, "Exhaust", []string{"A", "B"})
+
+	// First vote: uses the single slot → 200
+	body := `{"nullifier":"0xn1","voteCommitment":"0xc1","proof":"p"}`
+	req := httptest.NewRequest("POST", "/api/polls/"+pollID+"/vote", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("first vote = %d: %s", w.Code, w.Body.String())
+	}
+
+	// Second vote: no slots left → 409
+	body2 := `{"nullifier":"0xn2","voteCommitment":"0xc2","proof":"p"}`
+	req = httptest.NewRequest("POST", "/api/polls/"+pollID+"/vote", strings.NewReader(body2))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != 409 {
+		t.Fatalf("expected 409 exhausted, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "exhausted") {
+		t.Fatalf("expected 'exhausted' in error, got %s", w.Body.String())
+	}
+
+	// Register a new voter → one more slot opens up
+	registerTestVoter(t, srv, pollID)
+	req = httptest.NewRequest("POST", "/api/polls/"+pollID+"/vote", strings.NewReader(body2))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("post-register vote = %d: %s", w.Code, w.Body.String())
+	}
+}
 
 func TestCastVoteEmptyRegistryRejected(t *testing.T) {
 	srv := testServer(t)
@@ -365,6 +413,7 @@ func TestResultsSealedWhileActive(t *testing.T) {
 func TestResultsVisibleWhenClosed(t *testing.T) {
 	srv := testServer(t)
 	pollID := createTestPoll(t, srv, "Visible", []string{"X", "Y"})
+	registerTestVoter(t, srv, pollID) // createTestPoll seeds 1; need 2 total
 
 	// Cast two votes
 	for i, null := range []string{"0xn1", "0xn2"} {
@@ -428,6 +477,10 @@ func TestResultsNotFound(t *testing.T) {
 func TestVoteCountAccuracy(t *testing.T) {
 	srv := testServer(t)
 	pollID := createTestPoll(t, srv, "Count Test", []string{"A", "B"})
+	// createTestPoll seeds 1 voter; need 5 total
+	for i := 0; i < 4; i++ {
+		registerTestVoter(t, srv, pollID)
+	}
 
 	// Cast 5 votes
 	for i := 0; i < 5; i++ {

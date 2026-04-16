@@ -23,6 +23,7 @@ func NewVote(name string) *Vote {
 
 	// Actions
 	schema.AddAction(metamodel.Action{ID: "createPoll", Guard: "pollConfig == 0", EventID: "PollCreated"})
+	schema.AddAction(metamodel.Action{ID: "registerVoter"})
 	schema.AddAction(metamodel.Action{ID: "castVote", Guard: "pollConfig == 1 && nullifiers[nullifier] == false", EventID: "VoteCast"})
 	schema.AddAction(metamodel.Action{ID: "closePoll", Guard: "pollConfig == 1", EventID: "PollClosed"})
 

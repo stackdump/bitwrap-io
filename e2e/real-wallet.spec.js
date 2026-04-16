@@ -163,6 +163,44 @@ test.describe('Real-wallet poll lifecycle (client-side signing)', () => {
     expect(voteResp.status()).toBe(200);
   });
 
+  test('registry exhaustion — second vote rejected 409 until another registration', async ({ request }) => {
+    const devSign = await request.post('/api/dev/sign', {
+      data: { message: 'bitwrap-create-poll:Exhaust flow', account: 6 },
+    });
+    const { signature, address } = await devSign.json();
+    const created = await request.post('/api/polls', {
+      data: { title: 'Exhaust flow', choices: ['A', 'B'], duration: 3600, creator: address, signature },
+    });
+    const { id: pollId } = await created.json();
+
+    // Register one voter → one slot
+    await request.post(`/api/polls/${pollId}/register`, {
+      data: { commitment: '0x' + '1'.padStart(64, '0') },
+    });
+
+    // First vote consumes the slot
+    const first = await request.post(`/api/polls/${pollId}/vote`, {
+      data: { nullifier: '0x' + 'a'.padStart(64, '0'), voteCommitment: '0x' + 'b'.padStart(64, '0'), proof: 'p' },
+    });
+    expect(first.status()).toBe(200);
+
+    // Second vote with different nullifier: rejected, no slots
+    const second = await request.post(`/api/polls/${pollId}/vote`, {
+      data: { nullifier: '0x' + 'c'.padStart(64, '0'), voteCommitment: '0x' + 'd'.padStart(64, '0'), proof: 'p' },
+    });
+    expect(second.status()).toBe(409);
+    expect(await second.text()).toContain('exhausted');
+
+    // Register another voter, then vote again
+    await request.post(`/api/polls/${pollId}/register`, {
+      data: { commitment: '0x' + '2'.padStart(64, '0') },
+    });
+    const third = await request.post(`/api/polls/${pollId}/vote`, {
+      data: { nullifier: '0x' + 'c'.padStart(64, '0'), voteCommitment: '0x' + 'd'.padStart(64, '0'), proof: 'p' },
+    });
+    expect(third.status()).toBe(200);
+  });
+
   test('wrong-account signature is rejected by VerifySignature', async ({ request }) => {
     const sig = await (await request.post('/api/dev/sign', {
       data: { message: 'bitwrap-create-poll:Spoof', account: 0 },
