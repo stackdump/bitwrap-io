@@ -1,15 +1,29 @@
 // @ts-check
-const { defineConfig } = require('@playwright/test');
+import { defineConfig } from '@playwright/test';
+import 'dotenv/config';
 
-module.exports = defineConfig({
+const BASE_URL = process.env.BASE_URL || 'http://localhost:8088';
+
+export default defineConfig({
   testDir: '.',
-  testMatch: '*.spec.js',
-  timeout: 30000,
+  timeout: 60000,
   use: {
-    baseURL: 'http://localhost:8088',
-    headless: true,
+    baseURL: BASE_URL,
   },
   projects: [
-    { name: 'chromium', use: { browserName: 'chromium' } },
+    // Fast path: dev-wallet shim + API smoke tests. CI runs this on every PR.
+    {
+      name: 'chromium',
+      testMatch: ['bitwrap.spec.js', 'poll-e2e.spec.js'],
+      use: { browserName: 'chromium', headless: true },
+    },
+    // Slow path: real MetaMask extension via Synpress. Run with `npm run test:wallet`.
+    // Extensions require headed mode and a persistent context.
+    {
+      name: 'wallet',
+      testMatch: 'real-wallet.spec.js',
+      use: { browserName: 'chromium', headless: false },
+      timeout: 120000,
+    },
   ],
 });

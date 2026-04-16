@@ -2,7 +2,7 @@
 // Poll e2e test — uses dev wallet with multiple signers.
 // Requires server started with: ./bitwrap -port 8088 -dev -no-prover
 
-const { test, expect } = require('@playwright/test');
+import { test, expect } from '@playwright/test';
 
 // Helper: sign a message using the dev endpoint with a specific account index (0-9)
 async function devSign(request, message, account = 0) {

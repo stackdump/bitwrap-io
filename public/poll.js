@@ -10,6 +10,53 @@ window.currentPollId = null;
 let currentPollData = null; // cached poll data from loadPoll
 let selectedChoice = null;
 
+// ============ Wallet Provider ============
+// EIP-6963 multi-provider discovery. When multiple wallets (MetaMask, Trust,
+// Coinbase) are installed, window.ethereum is last-writer-wins and may point
+// at the wrong wallet. EIP-6963 lets each wallet announce itself so we can
+// pick deterministically. Providers are collected eagerly at module load.
+
+const eip6963Providers = [];
+if (typeof window !== 'undefined') {
+    window.addEventListener('eip6963:announceProvider', (e) => {
+        eip6963Providers.push(e.detail);
+    });
+    window.dispatchEvent(new Event('eip6963:requestProvider'));
+}
+
+function getWalletProvider() {
+    // Prefer EIP-6963 announced providers; fall back to window.ethereum.
+    if (eip6963Providers.length > 0) return eip6963Providers[0].provider;
+    return window.ethereum || null;
+}
+
+function walletIdentity(provider) {
+    if (!provider) return 'none';
+    const tags = [];
+    if (provider.isMetaMask) tags.push('MetaMask');
+    if (provider.isTrust || provider.isTrustWallet) tags.push('Trust');
+    if (provider.isCoinbaseWallet) tags.push('Coinbase');
+    if (provider.isRabby) tags.push('Rabby');
+    if (provider.isDevWallet) tags.push('DevWallet');
+    return tags.length ? tags.join('+') : 'unknown';
+}
+
+function walletError(err, context) {
+    const code = err && err.code != null ? err.code : 'n/a';
+    const msg = err && err.message ? err.message : String(err);
+    console.error(`[wallet:${context}] code=${code} wallet=${walletIdentity(getWalletProvider())}`, err);
+    // EIP-1193 well-known codes
+    const hint = {
+        4001: 'user rejected',
+        4100: 'unauthorized',
+        4200: 'method not supported',
+        4900: 'wallet disconnected',
+        [-32602]: 'invalid params',
+        [-32603]: 'internal error',
+    }[code];
+    return hint ? `${msg} (code ${code}: ${hint})` : `${msg}${code !== 'n/a' ? ` (code ${code})` : ''}`;
+}
+
 // ============ Navigation ============
 
 window.showCreate = function() {
@@ -112,19 +159,20 @@ window.createPoll = async function() {
 
     try {
         // Require wallet signature
-        if (!window.ethereum) {
-            showMsg('MetaMask or another Ethereum wallet is required to create polls.', 'error');
+        const provider = getWalletProvider();
+        if (!provider) {
+            showMsg('MetaMask, Trust Wallet, or another Ethereum wallet is required to create polls.', 'error');
             btn.disabled = false;
             btn.textContent = 'Create Poll';
             return;
         }
 
-        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        const accounts = await provider.request({ method: 'eth_requestAccounts' });
         const creator = accounts[0];
         const sigMsg = 'bitwrap-create-poll:' + title;
 
         btn.textContent = 'Sign to create...';
-        const signature = await window.ethereum.request({
+        const signature = await provider.request({
             method: 'personal_sign',
             params: [sigMsg, creator]
         });
@@ -161,7 +209,7 @@ window.createPoll = async function() {
             location.hash = data.id;
         }, 2000);
     } catch (err) {
-        showMsg('Failed to create poll: ' + err.message, 'error');
+        showMsg('Failed to create poll: ' + walletError(err, 'createPoll'), 'error');
     } finally {
         btn.disabled = false;
         btn.textContent = 'Create Poll';
@@ -232,8 +280,9 @@ async function loadPoll(pollId) {
 
             // Show close button if current wallet is the creator
             btnClose.style.display = 'none';
-            if (window.ethereum && poll.creator) {
-                window.ethereum.request({ method: 'eth_accounts' }).then(accts => {
+            const provider = getWalletProvider();
+            if (provider && poll.creator) {
+                provider.request({ method: 'eth_accounts' }).then(accts => {
                     if (accts.length > 0 && accts[0].toLowerCase() === poll.creator.toLowerCase()) {
                         btnClose.style.display = '';
                     }
@@ -271,18 +320,20 @@ window.castVote = async function() {
         // Generate a voter secret (in production, derived from wallet signature)
         // For now, use a random secret — users can connect wallet for deterministic secrets
         let voterSecret;
-        if (window.ethereum) {
+        const provider = getWalletProvider();
+        if (provider) {
             try {
-                const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+                const accounts = await provider.request({ method: 'eth_requestAccounts' });
                 const msg = `bitwrap-vote:${currentPollId}`;
-                const sig = await window.ethereum.request({
+                const sig = await provider.request({
                     method: 'personal_sign',
                     params: [msg, accounts[0]]
                 });
                 // Derive secret from signature (take first 31 bytes to stay within field)
                 voterSecret = BigInt('0x' + sig.slice(2, 64));
-            } catch {
+            } catch (e) {
                 // Wallet declined or unavailable — fall back to random
+                walletError(e, 'castVote:sign');
                 voterSecret = randomFieldElement();
             }
         } else {
@@ -399,7 +450,7 @@ window.castVote = async function() {
         // Refresh vote count
         loadPoll(currentPollId);
     } catch (err) {
-        showMsg('Vote failed: ' + err.message, 'error');
+        showMsg('Vote failed: ' + walletError(err, 'castVote'), 'error');
     } finally {
         btn.disabled = false;
         btn.textContent = 'Cast Vote';
@@ -409,17 +460,18 @@ window.castVote = async function() {
 // ============ Close Poll ============
 
 window.closePoll = async function() {
-    if (!window.ethereum) return showMsg('Wallet required to close poll', 'error');
+    const provider = getWalletProvider();
+    if (!provider) return showMsg('Wallet required to close poll', 'error');
 
     const btn = document.getElementById('btn-close');
     btn.disabled = true;
     btn.textContent = 'Signing...';
 
     try {
-        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        const accounts = await provider.request({ method: 'eth_requestAccounts' });
         const creator = accounts[0];
         const sigMsg = 'bitwrap-close-poll:' + currentPollId;
-        const signature = await window.ethereum.request({
+        const signature = await provider.request({
             method: 'personal_sign',
             params: [sigMsg, creator]
         });
@@ -436,7 +488,7 @@ window.closePoll = async function() {
         showMsg('Poll closed. Voters can now reveal their choices to build the tally.', 'success');
         loadPoll(currentPollId);
     } catch (err) {
-        showMsg('Close failed: ' + err.message, 'error');
+        showMsg('Close failed: ' + walletError(err, 'closePoll'), 'error');
     } finally {
         btn.disabled = false;
         btn.textContent = 'Close Poll';
@@ -624,10 +676,11 @@ window.registerForPoll = async function() {
 
     try {
         let voterSecret;
-        if (window.ethereum) {
-            const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        const provider = getWalletProvider();
+        if (provider) {
+            const accounts = await provider.request({ method: 'eth_requestAccounts' });
             const msg = `bitwrap-vote:${currentPollId}`;
-            const sig = await window.ethereum.request({
+            const sig = await provider.request({
                 method: 'personal_sign',
                 params: [msg, accounts[0]]
             });
@@ -658,7 +711,7 @@ window.registerForPoll = async function() {
         if (regInfo) regInfo.textContent = `${data.count} registered voter${data.count !== 1 ? 's' : ''}`;
         if (btn) { btn.textContent = 'Registered'; btn.style.opacity = '0.5'; }
     } catch (err) {
-        showMsg('Registration failed: ' + err.message, 'error');
+        showMsg('Registration failed: ' + walletError(err, 'register'), 'error');
         if (btn) { btn.disabled = false; btn.textContent = 'Register to Vote'; }
     }
 };
