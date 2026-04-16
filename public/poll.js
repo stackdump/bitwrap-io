@@ -292,14 +292,16 @@ async function loadPoll(pollId) {
                 }).catch(() => {});
             }
         } else {
-            // Poll closed — show reveal UI if voter has a stored secret
-            choicesDiv.innerHTML = '<p style="color:var(--text-muted);">This poll is closed. Reveal your vote to be counted in the tally.</p>';
+            // Poll closed — always show the Reveal button. If localStorage
+            // has the voterSecret we submit it directly; otherwise we fall
+            // through to a re-sign recovery flow (wallet re-signs the
+            // bitwrap-vote message; voter picks which choice they cast;
+            // server verifies mimcHash(secret, choice) == commitment).
+            choicesDiv.innerHTML = '<p style="color:var(--text-muted);">This poll is closed. Reveal your vote to add it to the tally.</p>';
             btnVote.style.display = 'none';
             btnClose.style.display = 'none';
-
-            // Check if we have a stored reveal key
-            const hasRevealData = findRevealData(pollId);
-            btnReveal.style.display = hasRevealData ? '' : 'none';
+            btnReveal.style.display = '';
+            btnReveal.textContent = findRevealData(pollId) ? 'Reveal My Vote' : 'Reveal My Vote (re-sign to recover)';
         }
     } catch (err) {
         showMsg('Failed to load poll: ' + err.message, 'error');
@@ -549,44 +551,116 @@ function findRevealData(pollId) {
 }
 
 window.revealVote = async function() {
-    const revealData = findRevealData(currentPollId);
-    if (!revealData) return showMsg('No stored vote found for this poll. You can only reveal from the browser you voted from.', 'error');
-
     const btn = document.getElementById('btn-reveal');
+
+    // Path A: localStorage has the voter's secret + choice — submit directly.
+    const cached = findRevealData(currentPollId);
+    if (cached) {
+        return submitReveal(btn, cached.nullifier, cached.voteChoice, cached.voterSecret, true);
+    }
+
+    // Path B (recovery): no localStorage entry. Re-derive voterSecret from
+    // the wallet signature (EIP-191 personal_sign is deterministic), ask the
+    // voter which choice they cast, and let the server verify
+    // mimcHash(voterSecret, voteChoice) == voteCommitment.
+    const provider = getWalletProvider();
+    if (!provider) {
+        return showMsg('No stored vote and no wallet available. Connect the wallet you voted with to recover.', 'error');
+    }
+
+    const choiceIdx = await promptForChoice(currentPollData ? currentPollData.choices : []);
+    if (choiceIdx === null) return;
+
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner"></span>Revealing...';
-
+    btn.innerHTML = '<span class="spinner"></span>Signing…';
     try {
-        const resp = await fetch(`/api/polls/${currentPollId}/reveal`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                nullifier: revealData.nullifier,
-                voteChoice: revealData.voteChoice,
-                voterSecret: revealData.voterSecret,
-            })
+        const accounts = await provider.request({ method: 'eth_requestAccounts' });
+        const sig = await provider.request({
+            method: 'personal_sign',
+            params: [`bitwrap-vote:${currentPollId}`, accounts[0]],
         });
+        const voterSecret = BigInt('0x' + sig.slice(2, 64));
+        const pollIdBig = BigInt('0x' + currentPollId.slice(0, 16));
+        // Nullifier is stored as a decimal field-element string (matches
+        // witness-builder's fieldStr convention; the server does an exact
+        // string match on it in handleRevealVote).
+        const nullifier = mimcHash(voterSecret, pollIdBig).toString(10);
 
-        if (!resp.ok) {
-            const text = await resp.text();
-            throw new Error(text);
-        }
-
-        showMsg('Vote revealed! Your choice has been added to the tally.', 'success');
-        btn.style.display = 'none';
-
-        // Clean up stored reveal data
-        try {
-            const key = `bitwrap-vote-${currentPollId}-${revealData.nullifier}`;
-            localStorage.removeItem(key);
-        } catch { /* ignore */ }
+        await submitReveal(btn, nullifier, choiceIdx, voterSecret.toString(), false);
     } catch (err) {
-        showMsg('Reveal failed: ' + err.message, 'error');
-    } finally {
+        showMsg('Reveal failed: ' + walletError(err, 'revealRecover'), 'error');
         btn.disabled = false;
         btn.textContent = 'Reveal My Vote';
     }
 };
+
+// submitReveal POSTs to /reveal and handles success/error UI.
+async function submitReveal(btn, nullifier, voteChoice, voterSecret, fromCache) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Revealing…';
+    try {
+        const resp = await fetch(`/api/polls/${currentPollId}/reveal`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ nullifier, voteChoice, voterSecret }),
+        });
+        if (!resp.ok) throw new Error(await resp.text());
+
+        showMsg('Vote revealed! Your choice has been added to the tally.', 'success');
+        btn.style.display = 'none';
+
+        if (fromCache) {
+            // Clean up stored reveal data once the server confirms.
+            try { localStorage.removeItem(`bitwrap-vote-${currentPollId}-${nullifier}`); } catch {}
+        }
+    } catch (err) {
+        // Most common recovery failure: the voter picked the wrong choice
+        // (server returns "commitment mismatch"). Make the error actionable.
+        const msg = err.message || String(err);
+        if (msg.toLowerCase().includes('commitment')) {
+            showMsg('That choice doesn\'t match your commitment. Click Reveal again and pick a different option.', 'error');
+        } else {
+            showMsg('Reveal failed: ' + msg, 'error');
+        }
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Reveal My Vote';
+    }
+}
+
+// promptForChoice shows an inline radio selector in the choices area and
+// resolves with the picked index (or null if the user cancels). Used only
+// in the recovery path.
+function promptForChoice(choices) {
+    return new Promise(resolve => {
+        const div = document.getElementById('vote-choices');
+        div.innerHTML = `
+          <p style="color:var(--text-muted);margin-bottom:12px;">
+            Which choice did you vote for? Your wallet will sign to re-derive the secret; the server will verify the match.
+          </p>
+          ${choices.map((c, i) => `
+            <label class="choice-option" data-idx="${i}">
+              <input type="radio" name="reveal-choice" value="${i}"/>
+              <span class="choice-label">${esc(c)}</span>
+            </label>`).join('')}
+          <div style="margin-top:16px;display:flex;gap:12px;">
+            <button class="btn-primary" id="btn-confirm-recover">Confirm</button>
+            <button class="btn-secondary" id="btn-cancel-recover">Cancel</button>
+          </div>`;
+        div.querySelectorAll('.choice-option').forEach(el => {
+            el.addEventListener('click', () => {
+                div.querySelectorAll('.choice-option').forEach(o => o.classList.remove('selected'));
+                el.classList.add('selected');
+            });
+        });
+        document.getElementById('btn-confirm-recover').addEventListener('click', () => {
+            const picked = div.querySelector('input[name="reveal-choice"]:checked');
+            if (!picked) return showMsg('Pick the choice you cast first.', 'error');
+            resolve(parseInt(picked.value, 10));
+        });
+        document.getElementById('btn-cancel-recover').addEventListener('click', () => resolve(null));
+    });
+}
 
 // ============ Results ============
 
