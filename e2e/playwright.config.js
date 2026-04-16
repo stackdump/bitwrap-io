@@ -17,12 +17,13 @@ export default defineConfig({
       testMatch: ['bitwrap.spec.js', 'poll-e2e.spec.js'],
       use: { browserName: 'chromium', headless: true },
     },
-    // Slow path: real MetaMask extension via Synpress. Run with `npm run test:wallet`.
-    // Extensions require headed mode and a persistent context.
+    // Real-signing wallet tests via e2e/wallet-fixture.js. The fixture
+    // injects window.ethereum with a deterministic secp256k1 keypair —
+    // no browser extension needed, so headless works in CI.
     {
       name: 'wallet',
       testMatch: 'real-wallet.spec.js',
-      use: { browserName: 'chromium', headless: false },
+      use: { browserName: 'chromium', headless: true },
       timeout: 120000,
     },
   ],
