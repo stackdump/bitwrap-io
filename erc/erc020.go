@@ -22,7 +22,7 @@ func NewERC020(name, symbol string, decimals uint8) *ERC020 {
 	schema.AddAction(metamodel.Action{ID: "transfer", Guard: "balances[from] >= amount && to != address(0)", EventID: "Transfer"})
 	schema.AddAction(metamodel.Action{ID: "approve", EventID: "Approve"})
 	schema.AddAction(metamodel.Action{ID: "transferFrom", Guard: "balances[from] >= amount && allowances[from][caller] >= amount"})
-	schema.AddAction(metamodel.Action{ID: "mint", Guard: "to != address(0)", EventID: "Mint"})
+	schema.AddAction(metamodel.Action{ID: "mint", Guard: "to != address(0)", EventID: "Mint", Roles: []string{"minter"}})
 	schema.AddAction(metamodel.Action{ID: "burn", Guard: "balances[from] >= amount", EventID: "Burn"})
 
 	schema.AddArc(metamodel.Arc{Source: "balances", Target: "transfer", Keys: []string{"from"}})

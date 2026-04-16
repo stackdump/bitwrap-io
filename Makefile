@@ -1,4 +1,4 @@
-.PHONY: build run test test-e2e test-playwright test-e2e-wallet validate clean wasm
+.PHONY: build run test test-e2e test-playwright test-e2e-wallet validate clean wasm gen-circuits
 
 PORT ?= 8088
 
@@ -34,6 +34,12 @@ test-e2e-wallet: build
 		trap "kill $$SERVER_PID 2>/dev/null || true" EXIT ; \
 		until curl -sf http://localhost:$(PORT)/ > /dev/null; do sleep 0.5; done ; \
 		cd e2e && npx playwright test --project=wallet
+
+# Regenerate synthesized ZK circuits from the ERC templates. CI runs this
+# and asserts `git diff --exit-code` so stale generated code fails the build.
+# See prover/synth/ for the generator.
+gen-circuits: build
+	./bitwrap -synthesize erc020 -output prover/erc020_gen.go
 
 clean:
 	rm -f bitwrap public/prover.wasm public/wasm_exec.js

@@ -344,11 +344,17 @@ func (c *VoteCastCircuit) Define(api frontend.API) error {
 
 // RegisterStandardCircuits registers all standard ERC-20 circuits with the prover.
 // Circuits are compiled in parallel for faster startup.
+//
+// Synthesized circuits (suffix "Synth") coexist with hand-written ones during
+// the phased synth rollout (gh#1, phase 2). Parity tests in prover/synth/
+// ensure both accept the same witnesses. The cutover in slice 2.6 deletes
+// the hand-written versions once every circuit has a synthesized twin.
 func RegisterStandardCircuits(p *Prover) error {
 	circuits := map[string]frontend.Circuit{
 		"transfer":     &TransferCircuit{},
 		"transferFrom": &TransferFromCircuit{},
 		"mint":         &MintCircuit{},
+		"mintSynth":    &MintSynthCircuit{}, // synthesized twin, slice 2.1
 		"burn":         &BurnCircuit{},
 		"approve":      &ApproveCircuit{},
 		"vestClaim":    &VestingClaimCircuit{},

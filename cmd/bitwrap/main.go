@@ -14,9 +14,12 @@ import (
 	"time"
 
 	"github.com/stackdump/bitwrap-io/dsl"
+	"github.com/stackdump/bitwrap-io/erc"
+	"github.com/stackdump/bitwrap-io/internal/metamodel"
 	"github.com/stackdump/bitwrap-io/internal/server"
-	"github.com/stackdump/bitwrap-io/public"
 	"github.com/stackdump/bitwrap-io/internal/store"
+	"github.com/stackdump/bitwrap-io/prover/synth"
+	"github.com/stackdump/bitwrap-io/public"
 	"github.com/stackdump/bitwrap-io/solidity"
 )
 
@@ -30,6 +33,7 @@ func main() {
 	compile := flag.String("compile", "", "Compile a .btw file and output JSON schema to stdout")
 	validate := flag.String("validate", "", "Validate a .btw file: compile → generate Solidity → forge build → forge test → deploy")
 	output := flag.String("output", "", "Save generated Foundry project to this directory (use with -validate)")
+	synthesize := flag.String("synthesize", "", "Synthesize gnark circuits from an ERC template (erc020|erc05725|vote). Writes Go source to -output (or stdout).")
 	flag.Parse()
 
 	if *compile != "" {
@@ -55,6 +59,10 @@ func main() {
 
 	if *validate != "" {
 		os.Exit(runValidate(*validate, *output))
+	}
+
+	if *synthesize != "" {
+		os.Exit(runSynthesize(*synthesize, *output))
 	}
 
 	storage := store.NewFSStore(*dataDir)
@@ -252,6 +260,47 @@ func runValidate(path, outputDir string) int {
 		fmt.Printf("  output   %s/\n", outputDir)
 	}
 	fmt.Printf("PASS\n")
+	return 0
+}
+
+// runSynthesize emits gnark circuit Go source for an ERC template. The
+// output is a single .go file the caller compiles as part of prover/.
+//
+// Deterministic: two runs on the same template produce byte-identical output.
+// The Makefile's `gen-circuits` target uses this in CI to catch stale
+// generated files via `git diff --exit-code`.
+func runSynthesize(template, outPath string) int {
+	var schema *metamodel.Schema
+	switch template {
+	case "erc020":
+		schema = erc.NewERC020("ERC020", "ERC", 18).Schema()
+	case "erc05725":
+		schema = erc.NewERC05725("ERC05725", "VEST", "0x0000000000000000000000000000000000000000").Schema()
+	case "vote":
+		schema = erc.NewVote("ZKPoll").Schema()
+	default:
+		fmt.Fprintf(os.Stderr, "unknown template %q (expected erc020|erc05725|vote)\n", template)
+		return 1
+	}
+
+	src, err := synth.Generate(schema, "prover")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "synth: %v\n", err)
+		return 1
+	}
+
+	if outPath == "" {
+		os.Stdout.WriteString(src)
+		return 0
+	}
+	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "mkdir %s: %v\n", filepath.Dir(outPath), err)
+		return 1
+	}
+	if err := os.WriteFile(outPath, []byte(src), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "write %s: %v\n", outPath, err)
+		return 1
+	}
 	return 0
 }
 

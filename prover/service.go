@@ -51,31 +51,51 @@ func (f *ArcnetWitnessFactory) CreateAssignment(circuitName string, witness map[
 		}
 		return assignment, nil
 
-	case "mint":
-		assignment := &MintCircuit{}
+	case "mint", "mintSynth":
+		// Same witness schema for both hand-written and synthesized Mint —
+		// parity tests depend on this sharing the assignment path.
+		var target interface {
+			// kept as interface so the switch below can share code
+		}
+		if circuitName == "mint" {
+			target = &MintCircuit{}
+		} else {
+			target = &MintSynthCircuit{}
+		}
 		var err error
-		if assignment.PreStateRoot, err = goprover.ParseWitnessField(witness, "preStateRoot"); err != nil {
+		var pre, post, caller, to, amount, minter, balanceTo frontend.Variable
+		if pre, err = goprover.ParseWitnessField(witness, "preStateRoot"); err != nil {
 			return nil, err
 		}
-		if assignment.PostStateRoot, err = goprover.ParseWitnessField(witness, "postStateRoot"); err != nil {
+		if post, err = goprover.ParseWitnessField(witness, "postStateRoot"); err != nil {
 			return nil, err
 		}
-		if assignment.Caller, err = goprover.ParseWitnessField(witness, "caller"); err != nil {
+		if caller, err = goprover.ParseWitnessField(witness, "caller"); err != nil {
 			return nil, err
 		}
-		if assignment.To, err = goprover.ParseWitnessField(witness, "to"); err != nil {
+		if to, err = goprover.ParseWitnessField(witness, "to"); err != nil {
 			return nil, err
 		}
-		if assignment.Amount, err = goprover.ParseWitnessField(witness, "amount"); err != nil {
+		if amount, err = goprover.ParseWitnessField(witness, "amount"); err != nil {
 			return nil, err
 		}
-		if assignment.Minter, err = goprover.ParseWitnessField(witness, "minter"); err != nil {
+		if minter, err = goprover.ParseWitnessField(witness, "minter"); err != nil {
 			return nil, err
 		}
-		if assignment.BalanceTo, err = goprover.ParseWitnessField(witness, "balanceTo"); err != nil {
+		if balanceTo, err = goprover.ParseWitnessField(witness, "balanceTo"); err != nil {
 			return nil, err
 		}
-		return assignment, nil
+		switch a := target.(type) {
+		case *MintCircuit:
+			a.PreStateRoot, a.PostStateRoot, a.Caller = pre, post, caller
+			a.To, a.Amount, a.Minter, a.BalanceTo = to, amount, minter, balanceTo
+			return a, nil
+		case *MintSynthCircuit:
+			a.PreStateRoot, a.PostStateRoot, a.Caller = pre, post, caller
+			a.To, a.Amount, a.Minter, a.BalanceTo = to, amount, minter, balanceTo
+			return a, nil
+		}
+		return nil, fmt.Errorf("unreachable")
 
 	case "burn":
 		assignment := &BurnCircuit{}
