@@ -16,7 +16,7 @@ func NewVote(name string) *Vote {
 	schema.Version = "Vote:1.0.0"
 
 	// States
-	schema.AddState(metamodel.State{ID: "voterRegistry", Type: "map[uint256]uint256", Exported: true})
+	schema.AddState(metamodel.State{ID: "voterRegistry", Type: "map[uint256]uint256", Exported: true, MerkleDepth: 20})
 	schema.AddState(metamodel.State{ID: "nullifiers", Type: "map[uint256]bool", Exported: true})
 	schema.AddState(metamodel.State{ID: "tallies", Type: "map[uint256]uint256", Exported: true})
 	schema.AddState(metamodel.State{ID: "pollConfig", Type: "uint256"})
@@ -24,7 +24,19 @@ func NewVote(name string) *Vote {
 	// Actions
 	schema.AddAction(metamodel.Action{ID: "createPoll", Guard: "pollConfig == 0", EventID: "PollCreated"})
 	schema.AddAction(metamodel.Action{ID: "registerVoter"})
-	schema.AddAction(metamodel.Action{ID: "castVote", Guard: "pollConfig == 1 && nullifiers[nullifier] == false", EventID: "VoteCast"})
+	// castVote's ZK obligations aren't arc-expressible — the nullifier and
+	// voteCommitment are keyed hash derivations the synthesizer must emit
+	// as explicit constraints.
+	schema.AddAction(metamodel.Action{
+		ID:      "castVote",
+		Guard:   "pollConfig == 1 && nullifiers[nullifier] == false",
+		EventID: "VoteCast",
+		ZKOps: []metamodel.ZKOp{
+			{Kind: metamodel.ZKOpNullifierBind, Inputs: []string{"voterSecret", "pollId"}, Output: "nullifier"},
+			{Kind: metamodel.ZKOpCommitmentBind, Inputs: []string{"voterSecret", "voteChoice"}, Output: "voteCommitment"},
+			{Kind: metamodel.ZKOpRangeCheck, Inputs: []string{"voteChoice"}, BitSize: 8},
+		},
+	})
 	schema.AddAction(metamodel.Action{ID: "closePoll", Guard: "pollConfig == 1", EventID: "PollClosed"})
 
 	// Arcs

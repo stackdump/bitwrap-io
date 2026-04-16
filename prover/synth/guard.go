@@ -133,7 +133,18 @@ func capitalize(s string) string {
 	}
 	r := []rune(s)
 	r[0] = unicode.ToUpper(r[0])
-	return string(r)
+	out := string(r)
+	// Normalize Go-style initialisms for common schema bindings.
+	// Keeps parity with hand-written struct field names (PollID not PollId).
+	for suffix, replacement := range map[string]string{
+		"Id":  "ID",
+		"Url": "URL",
+	} {
+		if strings.HasSuffix(out, suffix) {
+			out = out[:len(out)-len(suffix)] + replacement
+		}
+	}
+	return out
 }
 
 // depluralize handles the two collection names the ERC templates use today:

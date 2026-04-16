@@ -293,44 +293,57 @@ func (f *ArcnetWitnessFactory) CreateAssignment(circuitName string, witness map[
 			OwnerPath: ownerPath, OwnerIndices: ownerIdx,
 		}, nil
 
-	case "voteCast":
-		assignment := &VoteCastCircuit{}
+	case "voteCast", "voteCastSynth":
+		var pollID, registryRoot, nullifier, voteCommitment, maxChoices frontend.Variable
+		var voterSecret, voteChoice, voterWeight frontend.Variable
+		var pathElems, pathIdx [20]frontend.Variable
 		var err error
-		if assignment.PollID, err = goprover.ParseWitnessField(witness, "pollId"); err != nil {
+		if pollID, err = goprover.ParseWitnessField(witness, "pollId"); err != nil {
 			return nil, err
 		}
-		if assignment.VoterRegistryRoot, err = goprover.ParseWitnessField(witness, "voterRegistryRoot"); err != nil {
+		if registryRoot, err = goprover.ParseWitnessField(witness, "voterRegistryRoot"); err != nil {
 			return nil, err
 		}
-		if assignment.Nullifier, err = goprover.ParseWitnessField(witness, "nullifier"); err != nil {
+		if nullifier, err = goprover.ParseWitnessField(witness, "nullifier"); err != nil {
 			return nil, err
 		}
-		if assignment.VoteCommitment, err = goprover.ParseWitnessField(witness, "voteCommitment"); err != nil {
+		if voteCommitment, err = goprover.ParseWitnessField(witness, "voteCommitment"); err != nil {
 			return nil, err
 		}
-		if assignment.MaxChoices, err = goprover.ParseWitnessField(witness, "maxChoices"); err != nil {
+		if maxChoices, err = goprover.ParseWitnessField(witness, "maxChoices"); err != nil {
 			return nil, err
 		}
-		if assignment.VoterSecret, err = goprover.ParseWitnessField(witness, "voterSecret"); err != nil {
+		if voterSecret, err = goprover.ParseWitnessField(witness, "voterSecret"); err != nil {
 			return nil, err
 		}
-		if assignment.VoteChoice, err = goprover.ParseWitnessField(witness, "voteChoice"); err != nil {
+		if voteChoice, err = goprover.ParseWitnessField(witness, "voteChoice"); err != nil {
 			return nil, err
 		}
-		if assignment.VoterWeight, err = goprover.ParseWitnessField(witness, "voterWeight"); err != nil {
+		if voterWeight, err = goprover.ParseWitnessField(witness, "voterWeight"); err != nil {
 			return nil, err
 		}
 		for i := 0; i < 20; i++ {
-			key := fmt.Sprintf("pathElement%d", i)
-			if assignment.PathElements[i], err = goprover.ParseWitnessField(witness, key); err != nil {
+			if pathElems[i], err = goprover.ParseWitnessField(witness, fmt.Sprintf("pathElement%d", i)); err != nil {
 				return nil, err
 			}
-			key = fmt.Sprintf("pathIndex%d", i)
-			if assignment.PathIndices[i], err = goprover.ParseWitnessField(witness, key); err != nil {
+			if pathIdx[i], err = goprover.ParseWitnessField(witness, fmt.Sprintf("pathIndex%d", i)); err != nil {
 				return nil, err
 			}
 		}
-		return assignment, nil
+		if circuitName == "voteCast" {
+			return &VoteCastCircuit{
+				PollID: pollID, VoterRegistryRoot: registryRoot, Nullifier: nullifier,
+				VoteCommitment: voteCommitment, MaxChoices: maxChoices,
+				VoterSecret: voterSecret, VoteChoice: voteChoice, VoterWeight: voterWeight,
+				PathElements: pathElems, PathIndices: pathIdx,
+			}, nil
+		}
+		return &VoteCastSynthCircuit{
+			PollID: pollID, VoterRegistryRoot: registryRoot, Nullifier: nullifier,
+			VoteCommitment: voteCommitment, MaxChoices: maxChoices,
+			VoterSecret: voterSecret, VoteChoice: voteChoice, VoterWeight: voterWeight,
+			PathElements: pathElems, PathIndices: pathIdx,
+		}, nil
 
 	default:
 		return nil, fmt.Errorf("unknown circuit: %s", circuitName)

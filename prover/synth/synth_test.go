@@ -249,6 +249,28 @@ func TestTransferSynthSameConstraintCount(t *testing.T) {
 		b.Constraints, b.PublicVars, b.PrivateVars)
 }
 
+func TestVoteCastSynthSameConstraintCount(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping compile test in short mode")
+	}
+	p := prover.NewProver()
+	a, err := p.CompileCircuit("voteCast", &prover.VoteCastCircuit{})
+	if err != nil {
+		t.Fatalf("compile VoteCastCircuit: %v", err)
+	}
+	b, err := p.CompileCircuit("voteCastSynth", &prover.VoteCastSynthCircuit{})
+	if err != nil {
+		t.Fatalf("compile VoteCastSynthCircuit: %v", err)
+	}
+	if a.Constraints != b.Constraints || a.PublicVars != b.PublicVars || a.PrivateVars != b.PrivateVars {
+		t.Errorf("voteCast parity failed: hand=%d/%d/%d synth=%d/%d/%d",
+			a.Constraints, a.PublicVars, a.PrivateVars,
+			b.Constraints, b.PublicVars, b.PrivateVars)
+	}
+	t.Logf("both voteCast circuits: %d constraints, %d public, %d private",
+		b.Constraints, b.PublicVars, b.PrivateVars)
+}
+
 func TestVestingClaimSynthSameConstraintCount(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping compile test in short mode")

@@ -364,6 +364,7 @@ func RegisterStandardCircuits(p *Prover) error {
 		"vestClaim":      &VestingClaimCircuit{},
 		"vestClaimSynth": &VestingClaimSynthCircuit{}, // synthesized twin, slice 2.4d
 		"voteCast":       &VoteCastCircuit{},
+		"voteCastSynth":  &VoteCastSynthCircuit{}, // synthesized twin, slice 2.5
 	}
 
 	return RegisterCircuitsParallel(p, circuits)
