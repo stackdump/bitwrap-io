@@ -12,7 +12,7 @@ func init() {
 	register("mint", generateMint)
 }
 
-// generateMint emits MintSynthCircuit + its Define() method. Mirrors the
+// generateMint emits MintCircuit + its Define() method. Mirrors the
 // hand-written MintCircuit in prover/circuits.go:136-159 so the two can be
 // compared via parity fuzz tests.
 //
@@ -42,11 +42,11 @@ func generateMint(body *strings.Builder, schema *metamodel.Schema, action *metam
 	public := []string{"PreStateRoot", "PostStateRoot", "Caller", "To", "Amount"}
 	private := []string{"Minter", "BalanceTo"}
 
-	emitCircuitStruct(body, "MintSynthCircuit",
-		"MintSynthCircuit is generated from schema action \"mint\". Parity target: MintCircuit in prover/circuits.go.",
+	emitCircuitStruct(body, "MintCircuit",
+		"MintCircuit is generated from schema action \"mint\". Parity target: MintCircuit in prover/circuits.go.",
 		public, private)
 
-	emitDefineHeader(body, "MintSynthCircuit")
+	emitDefineHeader(body, "MintCircuit")
 	emitComment(body, "Role check (Action.Roles contains \"minter\")")
 	emitAssertEq(body, "c.Caller", "c.Minter")
 	emitComment(body, "Output arc: balances[to] += amount")

@@ -11,7 +11,7 @@ func init() {
 	register("transfer", generateTransfer)
 }
 
-// generateTransfer emits TransferSynthCircuit matching TransferCircuit in
+// generateTransfer emits TransferCircuit matching TransferCircuit in
 // prover/circuits.go:20-65. The interesting new pattern vs Burn: the
 // post-state is a pair-hash composition of two output-arc leaves
 // (decremented From + incremented To) rather than a single leaf.
@@ -39,8 +39,8 @@ func generateTransfer(body *strings.Builder, schema *metamodel.Schema, action *m
 		emitMimcHelper(body)
 	}
 
-	body.WriteString("// TransferSynthCircuit is generated from schema action \"transfer\". Parity target: TransferCircuit in prover/circuits.go.\n")
-	body.WriteString("type TransferSynthCircuit struct {\n")
+	body.WriteString("// TransferCircuit is generated from schema action \"transfer\". Parity target: TransferCircuit in prover/circuits.go.\n")
+	body.WriteString("type TransferCircuit struct {\n")
 	emitStructField(body, "PreStateRoot", true)
 	emitStructField(body, "PostStateRoot", true)
 	emitStructField(body, "From", true)
@@ -53,7 +53,7 @@ func generateTransfer(body *strings.Builder, schema *metamodel.Schema, action *m
 	emitMerklePathFields(body, "PathElements", "PathIndices", depth)
 	body.WriteString("}\n\n")
 
-	emitDefineHeader(body, "TransferSynthCircuit")
+	emitDefineHeader(body, "TransferCircuit")
 	if len(guardChecks) > 0 {
 		emitComment(body, fmt.Sprintf("Range checks from Action.Guard %q", action.Guard))
 		for i, chk := range guardChecks {

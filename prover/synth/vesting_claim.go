@@ -12,7 +12,7 @@ func init() {
 	register("claim", generateVestingClaim)
 }
 
-// generateVestingClaim emits VestingClaimSynthCircuit matching
+// generateVestingClaim emits VestingClaimCircuit matching
 // VestingClaimCircuit in prover/circuits.go:226-287.
 //
 // Constraint shape:
@@ -48,8 +48,8 @@ func generateVestingClaim(body *strings.Builder, schema *metamodel.Schema, actio
 		rangeBits = 64
 	}
 
-	body.WriteString("// VestingClaimSynthCircuit is generated from schema action \"claim\". Parity target: VestingClaimCircuit in prover/circuits.go.\n")
-	body.WriteString("type VestingClaimSynthCircuit struct {\n")
+	body.WriteString("// VestingClaimCircuit is generated from schema action \"claim\". Parity target: VestingClaimCircuit in prover/circuits.go.\n")
+	body.WriteString("type VestingClaimCircuit struct {\n")
 	emitStructField(body, "PreStateRoot", true)
 	emitStructField(body, "PostStateRoot", true)
 	emitStructField(body, "TokenID", true)
@@ -64,7 +64,7 @@ func generateVestingClaim(body *strings.Builder, schema *metamodel.Schema, actio
 	emitMerklePathFields(body, "OwnerPath", "OwnerIndices", ownerDepth)
 	body.WriteString("}\n\n")
 
-	emitDefineHeader(body, "VestingClaimSynthCircuit")
+	emitDefineHeader(body, "VestingClaimCircuit")
 	emitComment(body, "Role check (Action.Roles contains \"owner\")")
 	emitAssertEq(body, "c.Owner", "c.Caller")
 	body.WriteString("\n")

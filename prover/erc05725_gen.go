@@ -7,8 +7,8 @@ import (
 	"github.com/consensys/gnark/frontend"
 )
 
-// VestingClaimSynthCircuit is generated from schema action "claim". Parity target: VestingClaimCircuit in prover/circuits.go.
-type VestingClaimSynthCircuit struct {
+// VestingClaimCircuit is generated from schema action "claim". Parity target: VestingClaimCircuit in prover/circuits.go.
+type VestingClaimCircuit struct {
 	PreStateRoot  frontend.Variable `gnark:",public"`
 	PostStateRoot frontend.Variable `gnark:",public"`
 	TokenID       frontend.Variable `gnark:",public"`
@@ -25,7 +25,7 @@ type VestingClaimSynthCircuit struct {
 	OwnerIndices    [10]frontend.Variable
 }
 
-func (c *VestingClaimSynthCircuit) Define(api frontend.API) error {
+func (c *VestingClaimCircuit) Define(api frontend.API) error {
 	// Role check (Action.Roles contains "owner")
 	api.AssertIsEqual(c.Owner, c.Caller)
 

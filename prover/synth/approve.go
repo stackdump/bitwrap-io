@@ -12,7 +12,7 @@ func init() {
 	register("approve", generateApprove)
 }
 
-// generateApprove emits ApproveSynthCircuit matching ApproveCircuit in
+// generateApprove emits ApproveCircuit matching ApproveCircuit in
 // prover/circuits.go:201-223. The simplest role-gated transition: no
 // Merkle proof, one equality constraint (`caller == owner`), one post-
 // state hash (`postLeaf = mimcHash(Spender, Amount)`).
@@ -32,11 +32,11 @@ func generateApprove(body *strings.Builder, schema *metamodel.Schema, action *me
 	public := []string{"PreStateRoot", "PostStateRoot", "Caller", "Spender", "Amount"}
 	private := []string{"Owner"}
 
-	emitCircuitStruct(body, "ApproveSynthCircuit",
-		"ApproveSynthCircuit is generated from schema action \"approve\". Parity target: ApproveCircuit in prover/circuits.go.",
+	emitCircuitStruct(body, "ApproveCircuit",
+		"ApproveCircuit is generated from schema action \"approve\". Parity target: ApproveCircuit in prover/circuits.go.",
 		public, private)
 
-	emitDefineHeader(body, "ApproveSynthCircuit")
+	emitDefineHeader(body, "ApproveCircuit")
 	emitComment(body, "Role check (Action.Roles contains \"owner\")")
 	emitAssertEq(body, "c.Owner", "c.Caller")
 	emitComment(body, "Output arc: allowances[spender] = amount")

@@ -11,7 +11,7 @@ func init() {
 	register("burn", generateBurn)
 }
 
-// generateBurn emits BurnSynthCircuit + its Define() method. Mirrors the
+// generateBurn emits BurnCircuit + its Define() method. Mirrors the
 // hand-written BurnCircuit in prover/circuits.go:161-199.
 //
 // Constraint shape:
@@ -52,8 +52,8 @@ func generateBurn(body *strings.Builder, schema *metamodel.Schema, action *metam
 
 	// Struct declaration — inline because we need both scalar fields and
 	// fixed-size array fields in one struct, which emitCircuitStruct doesn't do.
-	body.WriteString("// BurnSynthCircuit is generated from schema action \"burn\". Parity target: BurnCircuit in prover/circuits.go.\n")
-	body.WriteString("type BurnSynthCircuit struct {\n")
+	body.WriteString("// BurnCircuit is generated from schema action \"burn\". Parity target: BurnCircuit in prover/circuits.go.\n")
+	body.WriteString("type BurnCircuit struct {\n")
 	emitStructField(body, "PreStateRoot", true)
 	emitStructField(body, "PostStateRoot", true)
 	emitStructField(body, "From", true)
@@ -64,7 +64,7 @@ func generateBurn(body *strings.Builder, schema *metamodel.Schema, action *metam
 	emitMerklePathFields(body, "PathElements", "PathIndices", depth)
 	body.WriteString("}\n\n")
 
-	emitDefineHeader(body, "BurnSynthCircuit")
+	emitDefineHeader(body, "BurnCircuit")
 	if len(guardChecks) > 0 {
 		emitComment(body, fmt.Sprintf("Range checks derived from Action.Guard %q", action.Guard))
 		for i, chk := range guardChecks {

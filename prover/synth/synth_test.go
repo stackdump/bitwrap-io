@@ -29,8 +29,8 @@ func TestGenerateMintDeterministic(t *testing.T) {
 	if a != b {
 		t.Fatalf("synth output not deterministic\n--- a ---\n%s\n--- b ---\n%s", a, b)
 	}
-	if !strings.Contains(a, "MintSynthCircuit") {
-		t.Errorf("expected MintSynthCircuit in output, got:\n%s", a)
+	if !strings.Contains(a, "MintCircuit") {
+		t.Errorf("expected MintCircuit in output, got:\n%s", a)
 	}
 }
 
@@ -54,7 +54,7 @@ func TestGenerateMintRequiresRole(t *testing.T) {
 	}
 }
 
-// TestMintSynthParity — the generated MintSynthCircuit must accept and
+// TestMintSynthParity — the generated MintCircuit must accept and
 // reject the same witnesses as the hand-written MintCircuit.
 //
 // This is the core parity guarantee: if any gnark solve result diverges
@@ -120,7 +120,7 @@ func TestMintSynthParity(t *testing.T) {
 				Minter:        tc.minter,
 				BalanceTo:     tc.balance,
 			}
-			synthesized := &prover.MintSynthCircuit{
+			synthesized := &prover.MintCircuit{
 				PreStateRoot:  0,
 				PostStateRoot: tc.postRoot,
 				Caller:        tc.caller,
@@ -132,13 +132,13 @@ func TestMintSynthParity(t *testing.T) {
 			// Both should fail (invalid witness) with same behavior.
 			if !tc.wantPass {
 				assert.SolvingFailed(&prover.MintCircuit{}, handWritten, test.WithCurves(ecc.BN254))
-				assert.SolvingFailed(&prover.MintSynthCircuit{}, synthesized, test.WithCurves(ecc.BN254))
+				assert.SolvingFailed(&prover.MintCircuit{}, synthesized, test.WithCurves(ecc.BN254))
 			}
 		})
 	}
 }
 
-// TestBurnSynthParity — generated BurnSynthCircuit mirrors the hand-written
+// TestBurnSynthParity — generated BurnCircuit mirrors the hand-written
 // BurnCircuit for invalid witnesses.
 func TestBurnSynthParity(t *testing.T) {
 	if testing.Short() {
@@ -157,24 +157,24 @@ func TestBurnSynthParity(t *testing.T) {
 		PreStateRoot:  999, PostStateRoot: 0, From: 42, Amount: 10,
 		BalanceFrom: 100, PathElements: path20, PathIndices: idx20,
 	}
-	synthesized := &prover.BurnSynthCircuit{
+	synthesized := &prover.BurnCircuit{
 		PreStateRoot:  999, PostStateRoot: 0, From: 42, Amount: 10,
 		BalanceFrom: 100, PathElements: path20, PathIndices: idx20,
 	}
 	assert.SolvingFailed(&prover.BurnCircuit{}, handWritten, test.WithCurves(ecc.BN254))
-	assert.SolvingFailed(&prover.BurnSynthCircuit{}, synthesized, test.WithCurves(ecc.BN254))
+	assert.SolvingFailed(&prover.BurnCircuit{}, synthesized, test.WithCurves(ecc.BN254))
 
 	// Amount > BalanceFrom — range check fails in both.
 	overdraw := &prover.BurnCircuit{
 		PreStateRoot: 0, PostStateRoot: 0, From: 1, Amount: 1_000_000,
 		BalanceFrom: 1, PathElements: path20, PathIndices: idx20,
 	}
-	overdrawSynth := &prover.BurnSynthCircuit{
+	overdrawSynth := &prover.BurnCircuit{
 		PreStateRoot: 0, PostStateRoot: 0, From: 1, Amount: 1_000_000,
 		BalanceFrom: 1, PathElements: path20, PathIndices: idx20,
 	}
 	assert.SolvingFailed(&prover.BurnCircuit{}, overdraw, test.WithCurves(ecc.BN254))
-	assert.SolvingFailed(&prover.BurnSynthCircuit{}, overdrawSynth, test.WithCurves(ecc.BN254))
+	assert.SolvingFailed(&prover.BurnCircuit{}, overdrawSynth, test.WithCurves(ecc.BN254))
 }
 
 func TestTransferSynthParity(t *testing.T) {
@@ -195,14 +195,14 @@ func TestTransferSynthParity(t *testing.T) {
 		BalanceFrom: 100, BalanceTo: 0,
 		PathElements: path20, PathIndices: idx20,
 	}
-	tamperedSynth := &prover.TransferSynthCircuit{
+	tamperedSynth := &prover.TransferCircuit{
 		PreStateRoot: 0, PostStateRoot: 12345,
 		From: 1, To: 2, Amount: 5,
 		BalanceFrom: 100, BalanceTo: 0,
 		PathElements: path20, PathIndices: idx20,
 	}
 	assert.SolvingFailed(&prover.TransferCircuit{}, tampered, test.WithCurves(ecc.BN254))
-	assert.SolvingFailed(&prover.TransferSynthCircuit{}, tamperedSynth, test.WithCurves(ecc.BN254))
+	assert.SolvingFailed(&prover.TransferCircuit{}, tamperedSynth, test.WithCurves(ecc.BN254))
 }
 
 func TestTransferFromSynthSameConstraintCount(t *testing.T) {
@@ -214,9 +214,9 @@ func TestTransferFromSynthSameConstraintCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile TransferFromCircuit: %v", err)
 	}
-	b, err := p.CompileCircuit("transferFromSynth", &prover.TransferFromSynthCircuit{})
+	b, err := p.CompileCircuit("transferFromSynth", &prover.TransferFromCircuit{})
 	if err != nil {
-		t.Fatalf("compile TransferFromSynthCircuit: %v", err)
+		t.Fatalf("compile TransferFromCircuit: %v", err)
 	}
 	if a.Constraints != b.Constraints || a.PublicVars != b.PublicVars || a.PrivateVars != b.PrivateVars {
 		t.Errorf("transferFrom parity failed: hand=%d/%d/%d synth=%d/%d/%d",
@@ -236,9 +236,9 @@ func TestTransferSynthSameConstraintCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile TransferCircuit: %v", err)
 	}
-	b, err := p.CompileCircuit("transferSynth", &prover.TransferSynthCircuit{})
+	b, err := p.CompileCircuit("transferSynth", &prover.TransferCircuit{})
 	if err != nil {
-		t.Fatalf("compile TransferSynthCircuit: %v", err)
+		t.Fatalf("compile TransferCircuit: %v", err)
 	}
 	if a.Constraints != b.Constraints || a.PublicVars != b.PublicVars || a.PrivateVars != b.PrivateVars {
 		t.Errorf("transfer parity failed: hand=%d/%d/%d synth=%d/%d/%d",
@@ -258,9 +258,9 @@ func TestVoteCastSynthSameConstraintCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile VoteCastCircuit: %v", err)
 	}
-	b, err := p.CompileCircuit("voteCastSynth", &prover.VoteCastSynthCircuit{})
+	b, err := p.CompileCircuit("voteCastSynth", &prover.VoteCastCircuit{})
 	if err != nil {
-		t.Fatalf("compile VoteCastSynthCircuit: %v", err)
+		t.Fatalf("compile VoteCastCircuit: %v", err)
 	}
 	if a.Constraints != b.Constraints || a.PublicVars != b.PublicVars || a.PrivateVars != b.PrivateVars {
 		t.Errorf("voteCast parity failed: hand=%d/%d/%d synth=%d/%d/%d",
@@ -280,9 +280,9 @@ func TestVestingClaimSynthSameConstraintCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile VestingClaimCircuit: %v", err)
 	}
-	b, err := p.CompileCircuit("vestClaimSynth", &prover.VestingClaimSynthCircuit{})
+	b, err := p.CompileCircuit("vestClaimSynth", &prover.VestingClaimCircuit{})
 	if err != nil {
-		t.Fatalf("compile VestingClaimSynthCircuit: %v", err)
+		t.Fatalf("compile VestingClaimCircuit: %v", err)
 	}
 	if a.Constraints != b.Constraints || a.PublicVars != b.PublicVars || a.PrivateVars != b.PrivateVars {
 		t.Errorf("vestClaim parity failed: hand=%d/%d/%d synth=%d/%d/%d",
@@ -302,9 +302,9 @@ func TestBurnSynthSameConstraintCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile BurnCircuit: %v", err)
 	}
-	b, err := p.CompileCircuit("burnSynth", &prover.BurnSynthCircuit{})
+	b, err := p.CompileCircuit("burnSynth", &prover.BurnCircuit{})
 	if err != nil {
-		t.Fatalf("compile BurnSynthCircuit: %v", err)
+		t.Fatalf("compile BurnCircuit: %v", err)
 	}
 	if a.Constraints != b.Constraints || a.PublicVars != b.PublicVars || a.PrivateVars != b.PrivateVars {
 		t.Errorf("burn parity failed: hand=%d/%d/%d synth=%d/%d/%d",
@@ -326,9 +326,9 @@ func TestMintSynthSameConstraintCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile MintCircuit: %v", err)
 	}
-	synthCC, err := p.CompileCircuit("mintSynth", &prover.MintSynthCircuit{})
+	synthCC, err := p.CompileCircuit("mintSynth", &prover.MintCircuit{})
 	if err != nil {
-		t.Fatalf("compile MintSynthCircuit: %v", err)
+		t.Fatalf("compile MintCircuit: %v", err)
 	}
 	if handWrittenCC.Constraints != synthCC.Constraints {
 		t.Errorf("constraint count mismatch: hand-written=%d, synth=%d",

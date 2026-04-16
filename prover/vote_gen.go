@@ -7,8 +7,8 @@ import (
 	"github.com/consensys/gnark/frontend"
 )
 
-// VoteCastSynthCircuit is generated from schema action "castVote". Parity target: VoteCastCircuit in prover/circuits.go.
-type VoteCastSynthCircuit struct {
+// VoteCastCircuit is generated from schema action "castVote". Parity target: VoteCastCircuit in prover/circuits.go.
+type VoteCastCircuit struct {
 	PollID            frontend.Variable `gnark:",public"`
 	VoterRegistryRoot frontend.Variable `gnark:",public"`
 	Nullifier         frontend.Variable `gnark:",public"`
@@ -23,7 +23,7 @@ type VoteCastSynthCircuit struct {
 	PathIndices  [20]frontend.Variable
 }
 
-func (c *VoteCastSynthCircuit) Define(api frontend.API) error {
+func (c *VoteCastCircuit) Define(api frontend.API) error {
 	// 1. Merkle membership: leaf = mimcHash(voterSecret, voterWeight) → VoterRegistryRoot
 	leaf := synthMimcHash(api, c.VoterSecret, c.VoterWeight)
 	current := leaf

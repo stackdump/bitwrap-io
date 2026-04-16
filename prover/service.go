@@ -15,7 +15,7 @@ type ArcnetWitnessFactory struct{}
 // CreateAssignment implements goprover.WitnessFactory.
 func (f *ArcnetWitnessFactory) CreateAssignment(circuitName string, witness map[string]string) (frontend.Circuit, error) {
 	switch circuitName {
-	case "transfer", "transferSynth":
+	case "transfer":
 		var err error
 		var pre, post, from, to, amount, balanceFrom, balanceTo frontend.Variable
 		var pathElems, pathIdx [20]frontend.Variable
@@ -55,59 +55,39 @@ func (f *ArcnetWitnessFactory) CreateAssignment(circuitName string, witness map[
 				PathElements: pathElems, PathIndices: pathIdx,
 			}, nil
 		}
-		return &TransferSynthCircuit{
+		return &TransferCircuit{
 			PreStateRoot: pre, PostStateRoot: post, From: from, To: to, Amount: amount,
 			BalanceFrom: balanceFrom, BalanceTo: balanceTo,
 			PathElements: pathElems, PathIndices: pathIdx,
 		}, nil
 
-	case "mint", "mintSynth":
-		// Same witness schema for both hand-written and synthesized Mint —
-		// parity tests depend on this sharing the assignment path.
-		var target interface {
-			// kept as interface so the switch below can share code
-		}
-		if circuitName == "mint" {
-			target = &MintCircuit{}
-		} else {
-			target = &MintSynthCircuit{}
-		}
+	case "mint":
+		a := &MintCircuit{}
 		var err error
-		var pre, post, caller, to, amount, minter, balanceTo frontend.Variable
-		if pre, err = goprover.ParseWitnessField(witness, "preStateRoot"); err != nil {
+		if a.PreStateRoot, err = goprover.ParseWitnessField(witness, "preStateRoot"); err != nil {
 			return nil, err
 		}
-		if post, err = goprover.ParseWitnessField(witness, "postStateRoot"); err != nil {
+		if a.PostStateRoot, err = goprover.ParseWitnessField(witness, "postStateRoot"); err != nil {
 			return nil, err
 		}
-		if caller, err = goprover.ParseWitnessField(witness, "caller"); err != nil {
+		if a.Caller, err = goprover.ParseWitnessField(witness, "caller"); err != nil {
 			return nil, err
 		}
-		if to, err = goprover.ParseWitnessField(witness, "to"); err != nil {
+		if a.To, err = goprover.ParseWitnessField(witness, "to"); err != nil {
 			return nil, err
 		}
-		if amount, err = goprover.ParseWitnessField(witness, "amount"); err != nil {
+		if a.Amount, err = goprover.ParseWitnessField(witness, "amount"); err != nil {
 			return nil, err
 		}
-		if minter, err = goprover.ParseWitnessField(witness, "minter"); err != nil {
+		if a.Minter, err = goprover.ParseWitnessField(witness, "minter"); err != nil {
 			return nil, err
 		}
-		if balanceTo, err = goprover.ParseWitnessField(witness, "balanceTo"); err != nil {
+		if a.BalanceTo, err = goprover.ParseWitnessField(witness, "balanceTo"); err != nil {
 			return nil, err
 		}
-		switch a := target.(type) {
-		case *MintCircuit:
-			a.PreStateRoot, a.PostStateRoot, a.Caller = pre, post, caller
-			a.To, a.Amount, a.Minter, a.BalanceTo = to, amount, minter, balanceTo
-			return a, nil
-		case *MintSynthCircuit:
-			a.PreStateRoot, a.PostStateRoot, a.Caller = pre, post, caller
-			a.To, a.Amount, a.Minter, a.BalanceTo = to, amount, minter, balanceTo
-			return a, nil
-		}
-		return nil, fmt.Errorf("unreachable")
+		return a, nil
 
-	case "burn", "burnSynth":
+	case "burn":
 		// Shared witness schema for hand-written and synthesized Burn.
 		var err error
 		var pre, post, from, amount, balanceFrom frontend.Variable
@@ -141,12 +121,12 @@ func (f *ArcnetWitnessFactory) CreateAssignment(circuitName string, witness map[
 				BalanceFrom: balanceFrom, PathElements: pathElems, PathIndices: pathIdx,
 			}, nil
 		}
-		return &BurnSynthCircuit{
+		return &BurnCircuit{
 			PreStateRoot: pre, PostStateRoot: post, From: from, Amount: amount,
 			BalanceFrom: balanceFrom, PathElements: pathElems, PathIndices: pathIdx,
 		}, nil
 
-	case "approve", "approveSynth":
+	case "approve":
 		var pre, post, caller, spender, amount, owner frontend.Variable
 		var err error
 		if pre, err = goprover.ParseWitnessField(witness, "preStateRoot"); err != nil {
@@ -173,12 +153,12 @@ func (f *ArcnetWitnessFactory) CreateAssignment(circuitName string, witness map[
 				Spender: spender, Amount: amount, Owner: owner,
 			}, nil
 		}
-		return &ApproveSynthCircuit{
+		return &ApproveCircuit{
 			PreStateRoot: pre, PostStateRoot: post, Caller: caller,
 			Spender: spender, Amount: amount, Owner: owner,
 		}, nil
 
-	case "transferFrom", "transferFromSynth":
+	case "transferFrom":
 		// Shared witness schema — same field names and dimensions.
 		var pre, post, from, to, caller, amount, balanceFrom, allowanceFrom frontend.Variable
 		var balPath, balIdx, allowPath, allowIdx [10]frontend.Variable
@@ -229,14 +209,14 @@ func (f *ArcnetWitnessFactory) CreateAssignment(circuitName string, witness map[
 				AllowancePath: allowPath, AllowanceIdx: allowIdx,
 			}, nil
 		}
-		return &TransferFromSynthCircuit{
+		return &TransferFromCircuit{
 			PreStateRoot: pre, PostStateRoot: post, From: from, To: to, Caller: caller, Amount: amount,
 			BalanceFrom: balanceFrom, AllowanceFrom: allowanceFrom,
 			BalancePath: balPath, BalanceIndices: balIdx,
 			AllowancePath: allowPath, AllowanceIdx: allowIdx,
 		}, nil
 
-	case "vestClaim", "vestClaimSynth":
+	case "vestClaim":
 		var pre, post, tokenID, caller, claimAmount, vestedAmount, claimed, owner frontend.Variable
 		var schedulePath, scheduleIdx, ownerPath, ownerIdx [10]frontend.Variable
 		var err error
@@ -286,14 +266,14 @@ func (f *ArcnetWitnessFactory) CreateAssignment(circuitName string, witness map[
 				OwnerPath: ownerPath, OwnerIndices: ownerIdx,
 			}, nil
 		}
-		return &VestingClaimSynthCircuit{
+		return &VestingClaimCircuit{
 			PreStateRoot: pre, PostStateRoot: post, TokenID: tokenID, Caller: caller,
 			ClaimAmount: claimAmount, VestedAmount: vestedAmount, Claimed: claimed, Owner: owner,
 			SchedulePath: schedulePath, ScheduleIndices: scheduleIdx,
 			OwnerPath: ownerPath, OwnerIndices: ownerIdx,
 		}, nil
 
-	case "voteCast", "voteCastSynth":
+	case "voteCast":
 		var pollID, registryRoot, nullifier, voteCommitment, maxChoices frontend.Variable
 		var voterSecret, voteChoice, voterWeight frontend.Variable
 		var pathElems, pathIdx [20]frontend.Variable
@@ -338,7 +318,7 @@ func (f *ArcnetWitnessFactory) CreateAssignment(circuitName string, witness map[
 				PathElements: pathElems, PathIndices: pathIdx,
 			}, nil
 		}
-		return &VoteCastSynthCircuit{
+		return &VoteCastCircuit{
 			PollID: pollID, VoterRegistryRoot: registryRoot, Nullifier: nullifier,
 			VoteCommitment: voteCommitment, MaxChoices: maxChoices,
 			VoterSecret: voterSecret, VoteChoice: voteChoice, VoterWeight: voterWeight,

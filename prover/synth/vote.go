@@ -11,7 +11,7 @@ func init() {
 	register("castVote", generateVoteCast)
 }
 
-// generateVoteCast emits VoteCastSynthCircuit matching VoteCastCircuit in
+// generateVoteCast emits VoteCastCircuit matching VoteCastCircuit in
 // prover/circuits.go:296-343.
 //
 // Uses the ZKOp extension point for ZK primitives that aren't arc-derivable:
@@ -65,8 +65,8 @@ func generateVoteCast(body *strings.Builder, schema *metamodel.Schema, action *m
 		choiceBits = 8
 	}
 
-	body.WriteString("// VoteCastSynthCircuit is generated from schema action \"castVote\". Parity target: VoteCastCircuit in prover/circuits.go.\n")
-	body.WriteString("type VoteCastSynthCircuit struct {\n")
+	body.WriteString("// VoteCastCircuit is generated from schema action \"castVote\". Parity target: VoteCastCircuit in prover/circuits.go.\n")
+	body.WriteString("type VoteCastCircuit struct {\n")
 	emitStructField(body, "PollID", true)
 	emitStructField(body, "VoterRegistryRoot", true)
 	emitStructField(body, "Nullifier", true)
@@ -80,7 +80,7 @@ func generateVoteCast(body *strings.Builder, schema *metamodel.Schema, action *m
 	emitMerklePathFields(body, "PathElements", "PathIndices", depth)
 	body.WriteString("}\n\n")
 
-	emitDefineHeader(body, "VoteCastSynthCircuit")
+	emitDefineHeader(body, "VoteCastCircuit")
 	emitComment(body, "1. Merkle membership: leaf = mimcHash(voterSecret, voterWeight) → VoterRegistryRoot")
 	emitMimcHashCall(body, "leaf", "c.VoterSecret", "c.VoterWeight")
 	body.WriteString("\tcurrent := leaf\n")

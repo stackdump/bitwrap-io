@@ -7,8 +7,8 @@ import (
 	"github.com/consensys/gnark/frontend"
 )
 
-// TransferSynthCircuit is generated from schema action "transfer". Parity target: TransferCircuit in prover/circuits.go.
-type TransferSynthCircuit struct {
+// TransferCircuit is generated from schema action "transfer". Parity target: TransferCircuit in prover/circuits.go.
+type TransferCircuit struct {
 	PreStateRoot  frontend.Variable `gnark:",public"`
 	PostStateRoot frontend.Variable `gnark:",public"`
 	From          frontend.Variable `gnark:",public"`
@@ -22,7 +22,7 @@ type TransferSynthCircuit struct {
 	PathIndices  [20]frontend.Variable
 }
 
-func (c *TransferSynthCircuit) Define(api frontend.API) error {
+func (c *TransferCircuit) Define(api frontend.API) error {
 	// Range checks from Action.Guard "balances[from] >= amount && to != address(0)"
 	diff := api.Sub(c.BalanceFrom, c.Amount)
 	api.ToBinary(diff, 64)
@@ -48,8 +48,8 @@ func (c *TransferSynthCircuit) Define(api frontend.API) error {
 	return nil
 }
 
-// ApproveSynthCircuit is generated from schema action "approve". Parity target: ApproveCircuit in prover/circuits.go.
-type ApproveSynthCircuit struct {
+// ApproveCircuit is generated from schema action "approve". Parity target: ApproveCircuit in prover/circuits.go.
+type ApproveCircuit struct {
 	PreStateRoot  frontend.Variable `gnark:",public"`
 	PostStateRoot frontend.Variable `gnark:",public"`
 	Caller        frontend.Variable `gnark:",public"`
@@ -59,7 +59,7 @@ type ApproveSynthCircuit struct {
 	Owner frontend.Variable
 }
 
-func (c *ApproveSynthCircuit) Define(api frontend.API) error {
+func (c *ApproveCircuit) Define(api frontend.API) error {
 	// Role check (Action.Roles contains "owner")
 	api.AssertIsEqual(c.Owner, c.Caller)
 	// Output arc: allowances[spender] = amount
@@ -68,8 +68,8 @@ func (c *ApproveSynthCircuit) Define(api frontend.API) error {
 	return nil
 }
 
-// TransferFromSynthCircuit is generated from schema action "transferFrom". Parity target: TransferFromCircuit in prover/circuits.go.
-type TransferFromSynthCircuit struct {
+// TransferFromCircuit is generated from schema action "transferFrom". Parity target: TransferFromCircuit in prover/circuits.go.
+type TransferFromCircuit struct {
 	PreStateRoot  frontend.Variable `gnark:",public"`
 	PostStateRoot frontend.Variable `gnark:",public"`
 	From          frontend.Variable `gnark:",public"`
@@ -86,7 +86,7 @@ type TransferFromSynthCircuit struct {
 	AllowanceIdx   [10]frontend.Variable
 }
 
-func (c *TransferFromSynthCircuit) Define(api frontend.API) error {
+func (c *TransferFromCircuit) Define(api frontend.API) error {
 	// Range checks from Action.Guard "balances[from] >= amount && allowances[from][caller] >= amount"
 	diff1 := api.Sub(c.BalanceFrom, c.Amount)
 	api.ToBinary(diff1, 64)
@@ -130,8 +130,8 @@ func (c *TransferFromSynthCircuit) Define(api frontend.API) error {
 	return nil
 }
 
-// MintSynthCircuit is generated from schema action "mint". Parity target: MintCircuit in prover/circuits.go.
-type MintSynthCircuit struct {
+// MintCircuit is generated from schema action "mint". Parity target: MintCircuit in prover/circuits.go.
+type MintCircuit struct {
 	PreStateRoot  frontend.Variable `gnark:",public"`
 	PostStateRoot frontend.Variable `gnark:",public"`
 	Caller        frontend.Variable `gnark:",public"`
@@ -142,7 +142,7 @@ type MintSynthCircuit struct {
 	BalanceTo frontend.Variable
 }
 
-func (c *MintSynthCircuit) Define(api frontend.API) error {
+func (c *MintCircuit) Define(api frontend.API) error {
 	// Role check (Action.Roles contains "minter")
 	api.AssertIsEqual(c.Caller, c.Minter)
 	// Output arc: balances[to] += amount
@@ -152,8 +152,8 @@ func (c *MintSynthCircuit) Define(api frontend.API) error {
 	return nil
 }
 
-// BurnSynthCircuit is generated from schema action "burn". Parity target: BurnCircuit in prover/circuits.go.
-type BurnSynthCircuit struct {
+// BurnCircuit is generated from schema action "burn". Parity target: BurnCircuit in prover/circuits.go.
+type BurnCircuit struct {
 	PreStateRoot  frontend.Variable `gnark:",public"`
 	PostStateRoot frontend.Variable `gnark:",public"`
 	From          frontend.Variable `gnark:",public"`
@@ -165,7 +165,7 @@ type BurnSynthCircuit struct {
 	PathIndices  [20]frontend.Variable
 }
 
-func (c *BurnSynthCircuit) Define(api frontend.API) error {
+func (c *BurnCircuit) Define(api frontend.API) error {
 	// Range checks derived from Action.Guard "balances[from] >= amount"
 	diff := api.Sub(c.BalanceFrom, c.Amount)
 	api.ToBinary(diff, 64)

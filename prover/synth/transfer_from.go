@@ -11,7 +11,7 @@ func init() {
 	register("transferFrom", generateTransferFrom)
 }
 
-// generateTransferFrom emits TransferFromSynthCircuit matching
+// generateTransferFrom emits TransferFromCircuit matching
 // TransferFromCircuit in prover/circuits.go:68-133.
 //
 // New patterns:
@@ -52,8 +52,8 @@ func generateTransferFrom(body *strings.Builder, schema *metamodel.Schema, actio
 		emitMimcHelper(body)
 	}
 
-	body.WriteString("// TransferFromSynthCircuit is generated from schema action \"transferFrom\". Parity target: TransferFromCircuit in prover/circuits.go.\n")
-	body.WriteString("type TransferFromSynthCircuit struct {\n")
+	body.WriteString("// TransferFromCircuit is generated from schema action \"transferFrom\". Parity target: TransferFromCircuit in prover/circuits.go.\n")
+	body.WriteString("type TransferFromCircuit struct {\n")
 	emitStructField(body, "PreStateRoot", true)
 	emitStructField(body, "PostStateRoot", true)
 	emitStructField(body, "From", true)
@@ -68,7 +68,7 @@ func generateTransferFrom(body *strings.Builder, schema *metamodel.Schema, actio
 	emitMerklePathFields(body, "AllowancePath", "AllowanceIdx", allowDepth)
 	body.WriteString("}\n\n")
 
-	emitDefineHeader(body, "TransferFromSynthCircuit")
+	emitDefineHeader(body, "TransferFromCircuit")
 
 	// Range checks from guard.
 	guardChecks, err := extractRangeChecks(action, 64)
