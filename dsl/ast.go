@@ -40,6 +40,7 @@ type Function struct {
 	Vars     []Var
 	Require  string // raw guard expression string
 	EventRef string // name of the linked event, from @event
+	Roles    []string // role bindings declared via `requires <role>` — e.g. []string{"minter"}
 	Arcs     []Arc
 }
 

@@ -70,6 +70,7 @@ func Build(ast *Schema) (*metamodel.Schema, error) {
 			ID:      fn.Name,
 			Guard:   fn.Require,
 			EventID: fn.EventRef,
+			Roles:   fn.Roles,
 		}
 		s.AddAction(action)
 

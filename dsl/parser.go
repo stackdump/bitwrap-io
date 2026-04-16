@@ -313,11 +313,31 @@ func (p *Parser) parseFunction() (Function, error) {
 	if _, err := p.expect(TokenRParen); err != nil {
 		return Function{}, err
 	}
+
+	fn := Function{Name: nameTok.Value}
+
+	// Optional `requires <role>(, <role>)*` between `fn(name)` and `{`.
+	// Lowered to Action.Roles so the circuit synthesizer emits the
+	// `caller == <role>` equality constraint (e.g. `requires minter`
+	// → `api.AssertIsEqual(c.Caller, c.Minter)`).
+	if p.peek().Type == TokenRequires {
+		p.advance()
+		for {
+			roleTok, err := p.expect(TokenIdent)
+			if err != nil {
+				return Function{}, err
+			}
+			fn.Roles = append(fn.Roles, roleTok.Value)
+			if p.peek().Type != TokenComma {
+				break
+			}
+			p.advance() // consume comma
+		}
+	}
+
 	if _, err := p.expect(TokenLBrace); err != nil {
 		return Function{}, err
 	}
-
-	fn := Function{Name: nameTok.Value}
 
 	for p.peek().Type != TokenRBrace && p.peek().Type != TokenEOF {
 		switch p.peek().Type {

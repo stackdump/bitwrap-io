@@ -41,7 +41,7 @@ schema ERC20 {
     transfer -|amount|> BALANCES[to]
   }
 
-  fn(approve) {
+  fn(approve) requires owner {
     var owner address
     var spender address
     var amount amount
@@ -64,7 +64,7 @@ schema ERC20 {
     transferFrom -|amount|> BALANCES[to]
   }
 
-  fn(mint) {
+  fn(mint) requires minter {
     var to address
     var amount amount
 

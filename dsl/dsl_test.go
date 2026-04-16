@@ -383,6 +383,72 @@ func TestParseError(t *testing.T) {
 	}
 }
 
+// TestParseRequiresRole — `fn(name) requires <role> { ... }` produces
+// Function.Roles. Lowering to Action.Roles is covered by TestBuildRolesLowered.
+func TestParseRequiresRole(t *testing.T) {
+	src := `schema T {
+  version "1.0"
+  register B uint256
+  fn(mint) requires minter {
+    var amount amount
+    mint -|amount|> B
+  }
+  fn(admin) requires owner, minter {
+    var amount amount
+    admin -|amount|> B
+  }
+  fn(burn) {
+    var amount amount
+    B -|amount|> burn
+  }
+}`
+	schema, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	byName := map[string][]string{}
+	for _, fn := range schema.Functions {
+		byName[fn.Name] = fn.Roles
+	}
+	if got := byName["mint"]; len(got) != 1 || got[0] != "minter" {
+		t.Errorf("mint roles: got %v, want [minter]", got)
+	}
+	if got := byName["admin"]; len(got) != 2 || got[0] != "owner" || got[1] != "minter" {
+		t.Errorf("admin roles: got %v, want [owner minter]", got)
+	}
+	if got := byName["burn"]; len(got) != 0 {
+		t.Errorf("burn should have no roles, got %v", got)
+	}
+}
+
+// TestBuildRolesLowered — Function.Roles flows into Action.Roles so the
+// synthesizer sees the metadata it needs.
+func TestBuildRolesLowered(t *testing.T) {
+	src := `schema T {
+  version "1.0"
+  register B uint256
+  fn(mint) requires minter {
+    var amount amount
+    mint -|amount|> B
+  }
+}`
+	ast, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	schema, err := Build(ast)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	a := schema.ActionByID("mint")
+	if a == nil {
+		t.Fatal("mint action missing")
+	}
+	if len(a.Roles) != 1 || a.Roles[0] != "minter" {
+		t.Errorf("mint Action.Roles: got %v, want [minter]", a.Roles)
+	}
+}
+
 func TestLexerComment(t *testing.T) {
 	src := `schema Test {
   // this is a comment

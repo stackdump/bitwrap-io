@@ -30,6 +30,7 @@ const (
 	TokenFn
 	TokenVar
 	TokenRequire
+	TokenRequires
 	TokenObservable
 	TokenIndexed
 
@@ -82,6 +83,8 @@ func (t TokenType) String() string {
 		return "var"
 	case TokenRequire:
 		return "require"
+	case TokenRequires:
+		return "requires"
 	case TokenLBrace:
 		return "{"
 	case TokenRBrace:
@@ -128,6 +131,7 @@ var keywords = map[string]TokenType{
 	"fn":            TokenFn,
 	"var":           TokenVar,
 	"require":       TokenRequire,
+	"requires":      TokenRequires,
 	"observable":    TokenObservable,
 	"indexed":       TokenIndexed,
 }
