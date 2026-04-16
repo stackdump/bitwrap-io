@@ -239,23 +239,18 @@ func (s *Server) handleCastVote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Petri net runtime gate (phase 1): each registerVoter event produces a
-	// voting slot; each castVote event consumes one. Reject once slots
-	// are exhausted. This simulates the voterRegistry→castVote arc without
-	// requiring the full schema rework that phase 2 (circuit synthesis) will
-	// do — the semantics match what the net would enforce if Fire() were
-	// fully wired.
-	events, _ := s.store.ReadEvents(pollID)
-	var regCount, voteCount int
-	for _, ev := range events {
-		switch ev.Action {
-		case "registerVoter":
-			regCount++
-		case "castVote":
-			voteCount++
-		}
+	// Petri net runtime gate (phase 2.7): replay past events through the
+	// schema Runtime and check if the castVote transition is enabled.
+	// The registrySlots TokenState + its registerVoter→registrySlots→castVote
+	// arcs enforce the "one vote per registration" invariant at the net
+	// level, replacing the phase-1 event-count counter.
+	storeEvents, _ := s.store.ReadEvents(pollID)
+	events := make([]PollEvent, 0, len(storeEvents))
+	for _, e := range storeEvents {
+		events = append(events, PollEvent{Action: e.Action, Bindings: e.Bindings})
 	}
-	if voteCount >= regCount {
+	rt := PollRuntime(events)
+	if !rt.Enabled("castVote") {
 		http.Error(w, "voter registry exhausted — all registration slots have been used", http.StatusConflict)
 		return
 	}

@@ -20,6 +20,13 @@ func NewVote(name string) *Vote {
 	schema.AddState(metamodel.State{ID: "nullifiers", Type: "map[uint256]bool", Exported: true})
 	schema.AddState(metamodel.State{ID: "tallies", Type: "map[uint256]uint256", Exported: true})
 	schema.AddState(metamodel.State{ID: "pollConfig", Type: "uint256"})
+	// registrySlots tracks how many registered voters have not yet cast a
+	// vote. It's a TokenState so rt.Enabled("castVote") gates on it
+	// automatically — each registerVoter produces a slot, each castVote
+	// consumes one. Mirrors the voterRegistry semantics for the runtime
+	// while leaving voterRegistry (DataState, Merkle-backed) as the
+	// ZK-proof witness surface.
+	schema.AddState(metamodel.State{ID: "registrySlots", Kind: metamodel.TokenState, Type: "int"})
 
 	// Actions
 	schema.AddAction(metamodel.Action{ID: "createPoll", Guard: "pollConfig == 0", EventID: "PollCreated"})
@@ -44,6 +51,12 @@ func NewVote(name string) *Vote {
 	schema.AddArc(metamodel.Arc{Source: "castVote", Target: "tallies", Keys: []string{"choice"}, Value: "weight"})
 	// castVote -> nullifiers (mark nullifier as used — weight=1 means "set to 1/true")
 	schema.AddArc(metamodel.Arc{Source: "castVote", Target: "nullifiers", Keys: []string{"nullifier"}, Value: "weight"})
+	// registrySlots token flow: registerVoter produces one, castVote consumes
+	// one. rt.Enabled("castVote") returns false when slots are exhausted —
+	// this is what the handler will check, replacing the phase-1 event-count
+	// exhaustion gate.
+	schema.AddArc(metamodel.Arc{Source: "registerVoter", Target: "registrySlots"})
+	schema.AddArc(metamodel.Arc{Source: "registrySlots", Target: "castVote"})
 	// Note: voterRegistry is verified via ZK proof (Merkle inclusion), not via on-chain arc
 
 	// Events
