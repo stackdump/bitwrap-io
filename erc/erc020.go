@@ -20,7 +20,7 @@ func NewERC020(name, symbol string, decimals uint8) *ERC020 {
 	schema.AddState(metamodel.State{ID: "allowances", Type: "map[address]map[address]uint256", Exported: true, MerkleDepth: 10})
 
 	schema.AddAction(metamodel.Action{ID: "transfer", Guard: "balances[from] >= amount && to != address(0)", EventID: "Transfer"})
-	schema.AddAction(metamodel.Action{ID: "approve", EventID: "Approve"})
+	schema.AddAction(metamodel.Action{ID: "approve", EventID: "Approve", Roles: []string{"owner"}})
 	schema.AddAction(metamodel.Action{ID: "transferFrom", Guard: "balances[from] >= amount && allowances[from][caller] >= amount"})
 	schema.AddAction(metamodel.Action{ID: "mint", Guard: "to != address(0)", EventID: "Mint", Roles: []string{"minter"}})
 	// Range check derived from Guard "balances[from] >= amount" by the synthesizer.

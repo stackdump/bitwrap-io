@@ -360,6 +360,7 @@ func RegisterStandardCircuits(p *Prover) error {
 		"burn":         &BurnCircuit{},
 		"burnSynth":    &BurnSynthCircuit{}, // synthesized twin, slice 2.2
 		"approve":      &ApproveCircuit{},
+		"approveSynth": &ApproveSynthCircuit{}, // synthesized twin, slice 2.4c
 		"vestClaim":    &VestingClaimCircuit{},
 		"voteCast":     &VoteCastCircuit{},
 	}

@@ -58,6 +58,26 @@ func (c *TransferSynthCircuit) Define(api frontend.API) error {
 	return nil
 }
 
+// ApproveSynthCircuit is generated from schema action "approve". Parity target: ApproveCircuit in prover/circuits.go.
+type ApproveSynthCircuit struct {
+	PreStateRoot  frontend.Variable `gnark:",public"`
+	PostStateRoot frontend.Variable `gnark:",public"`
+	Caller        frontend.Variable `gnark:",public"`
+	Spender       frontend.Variable `gnark:",public"`
+	Amount        frontend.Variable `gnark:",public"`
+
+	Owner frontend.Variable
+}
+
+func (c *ApproveSynthCircuit) Define(api frontend.API) error {
+	// Role check (Action.Roles contains "owner")
+	api.AssertIsEqual(c.Owner, c.Caller)
+	// Output arc: allowances[spender] = amount
+	postLeaf := synthMimcHash(api, c.Spender, c.Amount)
+	api.AssertIsEqual(postLeaf, c.PostStateRoot)
+	return nil
+}
+
 // TransferFromSynthCircuit is generated from schema action "transferFrom". Parity target: TransferFromCircuit in prover/circuits.go.
 type TransferFromSynthCircuit struct {
 	PreStateRoot  frontend.Variable `gnark:",public"`

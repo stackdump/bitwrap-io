@@ -146,28 +146,37 @@ func (f *ArcnetWitnessFactory) CreateAssignment(circuitName string, witness map[
 			BalanceFrom: balanceFrom, PathElements: pathElems, PathIndices: pathIdx,
 		}, nil
 
-	case "approve":
-		assignment := &ApproveCircuit{}
+	case "approve", "approveSynth":
+		var pre, post, caller, spender, amount, owner frontend.Variable
 		var err error
-		if assignment.PreStateRoot, err = goprover.ParseWitnessField(witness, "preStateRoot"); err != nil {
+		if pre, err = goprover.ParseWitnessField(witness, "preStateRoot"); err != nil {
 			return nil, err
 		}
-		if assignment.PostStateRoot, err = goprover.ParseWitnessField(witness, "postStateRoot"); err != nil {
+		if post, err = goprover.ParseWitnessField(witness, "postStateRoot"); err != nil {
 			return nil, err
 		}
-		if assignment.Caller, err = goprover.ParseWitnessField(witness, "caller"); err != nil {
+		if caller, err = goprover.ParseWitnessField(witness, "caller"); err != nil {
 			return nil, err
 		}
-		if assignment.Spender, err = goprover.ParseWitnessField(witness, "spender"); err != nil {
+		if spender, err = goprover.ParseWitnessField(witness, "spender"); err != nil {
 			return nil, err
 		}
-		if assignment.Amount, err = goprover.ParseWitnessField(witness, "amount"); err != nil {
+		if amount, err = goprover.ParseWitnessField(witness, "amount"); err != nil {
 			return nil, err
 		}
-		if assignment.Owner, err = goprover.ParseWitnessField(witness, "owner"); err != nil {
+		if owner, err = goprover.ParseWitnessField(witness, "owner"); err != nil {
 			return nil, err
 		}
-		return assignment, nil
+		if circuitName == "approve" {
+			return &ApproveCircuit{
+				PreStateRoot: pre, PostStateRoot: post, Caller: caller,
+				Spender: spender, Amount: amount, Owner: owner,
+			}, nil
+		}
+		return &ApproveSynthCircuit{
+			PreStateRoot: pre, PostStateRoot: post, Caller: caller,
+			Spender: spender, Amount: amount, Owner: owner,
+		}, nil
 
 	case "transferFrom", "transferFromSynth":
 		// Shared witness schema — same field names and dimensions.
