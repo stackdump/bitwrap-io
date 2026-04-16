@@ -12,7 +12,7 @@ const Gy = 0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8n;
 function mod(a, m) { return ((a % m) + m) % m; }
 
 function modInverse(a, m) {
-  let [old_r, r] = [a, m];
+  let [old_r, r] = [mod(a, m), m];
   let [old_s, s] = [1n, 0n];
   while (r !== 0n) {
     const q = old_r / r;
