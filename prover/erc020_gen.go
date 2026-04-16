@@ -53,7 +53,7 @@ type BurnSynthCircuit struct {
 }
 
 func (c *BurnSynthCircuit) Define(api frontend.API) error {
-	// Range check: BalanceFrom - Amount fits in 64 bits (non-negative)
+	// Range checks derived from Action.Guard "balances[from] >= amount"
 	diff := api.Sub(c.BalanceFrom, c.Amount)
 	api.ToBinary(diff, 64)
 

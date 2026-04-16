@@ -38,6 +38,15 @@ func generateBurn(body *strings.Builder, schema *metamodel.Schema, action *metam
 		rangeBits = 64 // matches hand-written BurnCircuit.api.ToBinary(diff, 64)
 	}
 
+	// Extract range checks from Action.Guard. For Burn the guard
+	// "balances[from] >= amount" produces exactly one check on BalanceFrom
+	// vs Amount, matching the explicit ZKOp below. When both sources are
+	// present we prefer the guard (it's closer to the declarative source).
+	guardChecks, err := extractRangeChecks(action, rangeBits)
+	if err != nil {
+		return fmt.Errorf("burn synth: guard extract: %w", err)
+	}
+
 	if !strings.Contains(body.String(), "func synthMimcHash") {
 		emitMimcHelper(body)
 	}
@@ -57,9 +66,20 @@ func generateBurn(body *strings.Builder, schema *metamodel.Schema, action *metam
 	body.WriteString("}\n\n")
 
 	emitDefineHeader(body, "BurnSynthCircuit")
-	emitComment(body, fmt.Sprintf("Range check: BalanceFrom - Amount fits in %d bits (non-negative)", rangeBits))
-	emitSub(body, "diff", "c.BalanceFrom", "c.Amount")
-	emitRangeCheck(body, "diff", rangeBits)
+	if len(guardChecks) > 0 {
+		emitComment(body, fmt.Sprintf("Range checks derived from Action.Guard %q", action.Guard))
+		for i, chk := range guardChecks {
+			varName := "diff"
+			if i > 0 {
+				varName = fmt.Sprintf("diff%d", i)
+			}
+			chk.emit(body, varName)
+		}
+	} else {
+		emitComment(body, fmt.Sprintf("Range check fallback (no guard): BalanceFrom - Amount fits in %d bits", rangeBits))
+		emitSub(body, "diff", "c.BalanceFrom", "c.Amount")
+		emitRangeCheck(body, "diff", rangeBits)
+	}
 	body.WriteString("\n")
 	emitComment(body, "Merkle membership: balances[from] = BalanceFrom at PreStateRoot")
 	emitMimcHashCall(body, "leaf", "c.From", "c.BalanceFrom")
