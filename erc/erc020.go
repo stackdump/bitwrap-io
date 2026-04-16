@@ -16,14 +16,16 @@ func NewERC020(name, symbol string, decimals uint8) *ERC020 {
 	schema.Version = "ERC-020:1.0.0"
 
 	schema.AddState(metamodel.State{ID: "totalSupply", Type: "uint256"})
-	schema.AddState(metamodel.State{ID: "balances", Type: "map[address]uint256", Exported: true})
-	schema.AddState(metamodel.State{ID: "allowances", Type: "map[address]map[address]uint256", Exported: true})
+	schema.AddState(metamodel.State{ID: "balances", Type: "map[address]uint256", Exported: true, MerkleDepth: 20})
+	schema.AddState(metamodel.State{ID: "allowances", Type: "map[address]map[address]uint256", Exported: true, MerkleDepth: 10})
 
 	schema.AddAction(metamodel.Action{ID: "transfer", Guard: "balances[from] >= amount && to != address(0)", EventID: "Transfer"})
 	schema.AddAction(metamodel.Action{ID: "approve", EventID: "Approve"})
 	schema.AddAction(metamodel.Action{ID: "transferFrom", Guard: "balances[from] >= amount && allowances[from][caller] >= amount"})
 	schema.AddAction(metamodel.Action{ID: "mint", Guard: "to != address(0)", EventID: "Mint", Roles: []string{"minter"}})
-	schema.AddAction(metamodel.Action{ID: "burn", Guard: "balances[from] >= amount", EventID: "Burn"})
+	schema.AddAction(metamodel.Action{ID: "burn", Guard: "balances[from] >= amount", EventID: "Burn", ZKOps: []metamodel.ZKOp{
+		{Kind: metamodel.ZKOpRangeCheck, Inputs: []string{"amount"}, BitSize: 64},
+	}})
 
 	schema.AddArc(metamodel.Arc{Source: "balances", Target: "transfer", Keys: []string{"from"}})
 	schema.AddArc(metamodel.Arc{Source: "transfer", Target: "balances", Keys: []string{"to"}})

@@ -97,35 +97,44 @@ func (f *ArcnetWitnessFactory) CreateAssignment(circuitName string, witness map[
 		}
 		return nil, fmt.Errorf("unreachable")
 
-	case "burn":
-		assignment := &BurnCircuit{}
+	case "burn", "burnSynth":
+		// Shared witness schema for hand-written and synthesized Burn.
 		var err error
-		if assignment.PreStateRoot, err = goprover.ParseWitnessField(witness, "preStateRoot"); err != nil {
+		var pre, post, from, amount, balanceFrom frontend.Variable
+		var pathElems, pathIdx [20]frontend.Variable
+		if pre, err = goprover.ParseWitnessField(witness, "preStateRoot"); err != nil {
 			return nil, err
 		}
-		if assignment.PostStateRoot, err = goprover.ParseWitnessField(witness, "postStateRoot"); err != nil {
+		if post, err = goprover.ParseWitnessField(witness, "postStateRoot"); err != nil {
 			return nil, err
 		}
-		if assignment.From, err = goprover.ParseWitnessField(witness, "from"); err != nil {
+		if from, err = goprover.ParseWitnessField(witness, "from"); err != nil {
 			return nil, err
 		}
-		if assignment.Amount, err = goprover.ParseWitnessField(witness, "amount"); err != nil {
+		if amount, err = goprover.ParseWitnessField(witness, "amount"); err != nil {
 			return nil, err
 		}
-		if assignment.BalanceFrom, err = goprover.ParseWitnessField(witness, "balanceFrom"); err != nil {
+		if balanceFrom, err = goprover.ParseWitnessField(witness, "balanceFrom"); err != nil {
 			return nil, err
 		}
 		for i := 0; i < 20; i++ {
-			key := fmt.Sprintf("pathElement%d", i)
-			if assignment.PathElements[i], err = goprover.ParseWitnessField(witness, key); err != nil {
+			if pathElems[i], err = goprover.ParseWitnessField(witness, fmt.Sprintf("pathElement%d", i)); err != nil {
 				return nil, err
 			}
-			key = fmt.Sprintf("pathIndex%d", i)
-			if assignment.PathIndices[i], err = goprover.ParseWitnessField(witness, key); err != nil {
+			if pathIdx[i], err = goprover.ParseWitnessField(witness, fmt.Sprintf("pathIndex%d", i)); err != nil {
 				return nil, err
 			}
 		}
-		return assignment, nil
+		if circuitName == "burn" {
+			return &BurnCircuit{
+				PreStateRoot: pre, PostStateRoot: post, From: from, Amount: amount,
+				BalanceFrom: balanceFrom, PathElements: pathElems, PathIndices: pathIdx,
+			}, nil
+		}
+		return &BurnSynthCircuit{
+			PreStateRoot: pre, PostStateRoot: post, From: from, Amount: amount,
+			BalanceFrom: balanceFrom, PathElements: pathElems, PathIndices: pathIdx,
+		}, nil
 
 	case "approve":
 		assignment := &ApproveCircuit{}

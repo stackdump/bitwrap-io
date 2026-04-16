@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/consensys/gnark-crypto/ecc"
+	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/test"
 
 	"github.com/stackdump/bitwrap-io/erc"
@@ -135,6 +136,66 @@ func TestMintSynthParity(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestBurnSynthParity — generated BurnSynthCircuit mirrors the hand-written
+// BurnCircuit for invalid witnesses.
+func TestBurnSynthParity(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping parity test in short mode")
+	}
+	assert := test.NewAssert(t)
+
+	// A witness with a bogus Merkle root is invalid for both circuits.
+	var path20 [20]frontend.Variable
+	var idx20 [20]frontend.Variable
+	for i := 0; i < 20; i++ {
+		path20[i] = 0
+		idx20[i] = 0
+	}
+	handWritten := &prover.BurnCircuit{
+		PreStateRoot:  999, PostStateRoot: 0, From: 42, Amount: 10,
+		BalanceFrom: 100, PathElements: path20, PathIndices: idx20,
+	}
+	synthesized := &prover.BurnSynthCircuit{
+		PreStateRoot:  999, PostStateRoot: 0, From: 42, Amount: 10,
+		BalanceFrom: 100, PathElements: path20, PathIndices: idx20,
+	}
+	assert.SolvingFailed(&prover.BurnCircuit{}, handWritten, test.WithCurves(ecc.BN254))
+	assert.SolvingFailed(&prover.BurnSynthCircuit{}, synthesized, test.WithCurves(ecc.BN254))
+
+	// Amount > BalanceFrom — range check fails in both.
+	overdraw := &prover.BurnCircuit{
+		PreStateRoot: 0, PostStateRoot: 0, From: 1, Amount: 1_000_000,
+		BalanceFrom: 1, PathElements: path20, PathIndices: idx20,
+	}
+	overdrawSynth := &prover.BurnSynthCircuit{
+		PreStateRoot: 0, PostStateRoot: 0, From: 1, Amount: 1_000_000,
+		BalanceFrom: 1, PathElements: path20, PathIndices: idx20,
+	}
+	assert.SolvingFailed(&prover.BurnCircuit{}, overdraw, test.WithCurves(ecc.BN254))
+	assert.SolvingFailed(&prover.BurnSynthCircuit{}, overdrawSynth, test.WithCurves(ecc.BN254))
+}
+
+func TestBurnSynthSameConstraintCount(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping compile test in short mode")
+	}
+	p := prover.NewProver()
+	a, err := p.CompileCircuit("burn", &prover.BurnCircuit{})
+	if err != nil {
+		t.Fatalf("compile BurnCircuit: %v", err)
+	}
+	b, err := p.CompileCircuit("burnSynth", &prover.BurnSynthCircuit{})
+	if err != nil {
+		t.Fatalf("compile BurnSynthCircuit: %v", err)
+	}
+	if a.Constraints != b.Constraints || a.PublicVars != b.PublicVars || a.PrivateVars != b.PrivateVars {
+		t.Errorf("burn parity failed: hand=%d/%d/%d synth=%d/%d/%d",
+			a.Constraints, a.PublicVars, a.PrivateVars,
+			b.Constraints, b.PublicVars, b.PrivateVars)
+	}
+	t.Logf("both burn circuits: %d constraints, %d public, %d private", b.Constraints, b.PublicVars, b.PrivateVars)
 }
 
 // TestMintSynthSameConstraintCount — compile both circuits and confirm they

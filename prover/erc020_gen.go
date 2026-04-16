@@ -38,3 +38,39 @@ func (c *MintSynthCircuit) Define(api frontend.API) error {
 	api.AssertIsEqual(postLeaf, c.PostStateRoot)
 	return nil
 }
+
+// BurnSynthCircuit is generated from schema action "burn". Parity target: BurnCircuit in prover/circuits.go.
+type BurnSynthCircuit struct {
+	PreStateRoot  frontend.Variable `gnark:",public"`
+	PostStateRoot frontend.Variable `gnark:",public"`
+	From          frontend.Variable `gnark:",public"`
+	Amount        frontend.Variable `gnark:",public"`
+
+	BalanceFrom frontend.Variable
+
+	PathElements [20]frontend.Variable
+	PathIndices  [20]frontend.Variable
+}
+
+func (c *BurnSynthCircuit) Define(api frontend.API) error {
+	// Range check: BalanceFrom - Amount fits in 64 bits (non-negative)
+	diff := api.Sub(c.BalanceFrom, c.Amount)
+	api.ToBinary(diff, 64)
+
+	// Merkle membership: balances[from] = BalanceFrom at PreStateRoot
+	leaf := synthMimcHash(api, c.From, c.BalanceFrom)
+	current := leaf
+	for i := 0; i < 20; i++ {
+		api.AssertIsBoolean(c.PathIndices[i])
+		left := api.Select(c.PathIndices[i], c.PathElements[i], current)
+		right := api.Select(c.PathIndices[i], current, c.PathElements[i])
+		current = synthMimcHash(api, left, right)
+	}
+	api.AssertIsEqual(current, c.PreStateRoot)
+
+	// Post-state: balances[from] decremented
+	newBalance := api.Sub(c.BalanceFrom, c.Amount)
+	postLeaf := synthMimcHash(api, c.From, newBalance)
+	api.AssertIsEqual(postLeaf, c.PostStateRoot)
+	return nil
+}
