@@ -44,6 +44,15 @@ body {
     text-decoration: none;
     letter-spacing: -0.02em;
     font-family: var(--mono);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.nav-brand img, .nav-brand svg {
+    width: 22px;
+    height: 22px;
+    display: block;
 }
 
 .nav-links {
@@ -531,4 +540,54 @@ body {
     .nav { padding: 12px 16px; }
     .section { padding: 48px 16px; }
     .hero { padding: 100px 16px 60px; }
+}
+
+/* Vote progress pills — four stages beneath the Cast Vote button so the
+   user sees exactly where the ~10s proving flow is. Each stage goes:
+   idle → active (spinning accent) → done (filled accent). */
+.vote-progress {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 16px;
+    flex-wrap: wrap;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+}
+.vote-stage {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    background: var(--bg-card);
+    transition: all 0.2s;
+}
+.vote-stage-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--border);
+    transition: background 0.2s, box-shadow 0.2s;
+}
+.vote-stage.active {
+    color: var(--accent);
+    border-color: var(--accent);
+}
+.vote-stage.active .vote-stage-dot {
+    background: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-dim);
+    animation: vote-pulse 1.2s ease-in-out infinite;
+}
+.vote-stage.done {
+    color: var(--accent-hover);
+    border-color: var(--accent-dim);
+}
+.vote-stage.done .vote-stage-dot {
+    background: var(--accent-hover);
+}
+@keyframes vote-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
 }

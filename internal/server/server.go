@@ -1,3 +1,10 @@
+// Package server wires the bitwrap HTTP API: poll lifecycle + ZK proof
+// submission + model storage + template generation. All endpoints
+// described in the top-level README are routed here.
+//
+// The handler tree is intentionally flat — one file per concern (polls,
+// templates, solgen, prover) — and the Server struct owns the store,
+// prover service, and key directory. See Options for startup flags.
 package server
 
 import (

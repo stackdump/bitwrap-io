@@ -11,6 +11,8 @@ Create polls where every vote is backed by a Groth16 proof. No one sees how you 
 
 ## Quick start
 
+**Prerequisites:** Go ≥ 1.24. Everything else is optional — `forge` + `anvil` (Foundry) are only needed for the `make validate` pipeline that deploys generated contracts end-to-end; `npm` is only for the Playwright e2e suite.
+
 ```bash
 git clone https://github.com/stackdump/bitwrap-io.git
 cd bitwrap-io
@@ -55,7 +57,7 @@ Poll creation requires an EIP-191 `personal_sign` signature from MetaMask or any
 - **ZK voting** — anonymous polls with nullifier-based double-vote prevention and on-chain proof verification. Sealed results prevent vote-timing correlation.
 - **Visual editor** — draw places, transitions, and arcs in the browser. Models are stored as content-addressed JSON-LD.
 - **Solidity generation** — produce deployable contracts and Foundry test suites from any template.
-- **ZK circuits** — Groth16 circuits for transfer, mint, burn, approve, transferFrom, vestClaim, and voteCast. Merkle proofs verify state inclusion.
+- **ZK circuits** — Groth16 circuits for transfer, mint, burn, approve, transferFrom, vestClaim, and voteCast, all **generated from the Petri net schema** (no hand-written gnark). One `.btw` source produces Solidity + Foundry tests + ZK circuits + witness builders.
 - **Deploy bundle** — download a complete Foundry project (`BitwrapZKPoll.sol` + `Verifier.sol` + tests + deploy script) from `GET /api/bundle/vote`.
 - **ERC templates** — start from ERC-20, ERC-721, ERC-1155, or a Vote template. Each is a complete Petri net with guards, arcs, and events.
 - **`.btw` DSL** — a compact schema language for defining Petri net models.
@@ -123,20 +125,22 @@ import { buildVoteCastWitness } from 'https://cdn.jsdelivr.net/gh/stackdump/bitw
 Single Go binary. Vanilla JS frontend. No npm, no React, no build step.
 
 ```
-cmd/bitwrap/       Entry point with -port, -data, -compile flags
+cmd/bitwrap/       Entry point (flags: -port, -data, -compile, -synthesize, -validate)
 dsl/               .btw lexer, parser, AST, builder
-erc/               ERC token standard templates (020, 721, 1155, vote)
-prover/            ZK circuits (Groth16 via gnark)
+erc/               ERC token standard templates (020, 721, 1155, 4626, 5725, vote)
+prover/            Groth16 prover service + generated circuits (prover/*_gen.go)
+  synth/           Circuit synthesizer — metamodel.Schema → gnark source
 solidity/          Solidity contract + test generation
-arc/               Arc-level execution (MiMC Merkle state trees, firing)
 internal/
   server/          HTTP handlers + poll lifecycle + wallet auth
-  petri/           Petri net model types + execution engine
-  metamodel/       Schema types (states, actions, arcs, events, constraints)
+  petri/           Petri net runtime (places, transitions, arcs, firing, reachability)
+  metamodel/       Schema types (states, actions, arcs, guards, events, ZKOps)
+  metamodel/guard/ Guard expression parser + evaluator
   seal/            CID computation (JSON-LD canonicalization via URDNA2015)
   store/           Filesystem storage (polls, votes, events)
   svg/             SVG rendering
-public/            Frontend JS/CSS/HTML (go:embed)
+public/            Frontend JS/CSS/HTML (embedded via go:embed)
+arc/               (deprecated) — compat wrappers re-exporting internal/petri
 ```
 
 ## .btw schema language
@@ -173,6 +177,22 @@ schema Poll {
 The arrows (`-|weight|>`) are arcs — they describe how tokens flow through the net. `castVote` increments the tally for the chosen option and marks the nullifier as used, all in one atomic transition.
 
 Compile to JSON: `bitwrap -compile poll.btw`
+
+## Circuit synthesis
+
+The same `.btw` source also drives the ZK circuits. A Petri net's structure maps naturally to Groth16 constraints:
+
+| Petri net primitive | Circuit constraint |
+|---|---|
+| Keyed input arc (`BALANCES[from] -\|amount\|>`) | Merkle membership proof in pre-state tree |
+| Keyed output arc (`-\|amount\|> BALANCES[to]`) | Post-state commitment hash |
+| Guard (`BALANCES[from] >= amount`) | Range check via `ToBinary` |
+| Role (`fn(mint) requires minter`) | `caller == minter` equality |
+| ZKOp (nullifier-bind, commitment-bind) | Keccak/MiMC derivation constraint |
+
+Run `bitwrap -synthesize examples/erc20.btw` and you get Go source for `TransferCircuit`, `ApproveCircuit`, `MintCircuit`, `BurnCircuit`, and `TransferFromCircuit` — each a `gnark` `frontend.Circuit` with correct public/private variable partitioning, Merkle-proof arrays sized per `State.MerkleDepth`, and guard-derived range checks. The Groth16 verifying key ships alongside the Solidity verifier so on-chain verification matches off-chain proving byte-for-byte.
+
+There is no hand-written gnark code in this repo — `prover/circuits.go` is 70 lines of registration glue, and every circuit type lives in `prover/*_gen.go`. A `make gen-circuits && git diff --exit-code` check in CI catches stale generated output.
 
 ## License
 

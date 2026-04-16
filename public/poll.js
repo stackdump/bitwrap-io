@@ -312,12 +312,41 @@ window.selectChoice = function(el, idx) {
     selectedChoice = idx;
 };
 
+// Vote progress — four stages, rendered as pills under the button so users
+// can see the flow instead of staring at a spinner for ~10 seconds.
+const VOTE_STAGES = ['Sign', 'Witness', 'Prove', 'Submit'];
+function showVoteProgress(stage) {
+    let bar = document.getElementById('vote-progress');
+    if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'vote-progress';
+        bar.className = 'vote-progress';
+        bar.innerHTML = VOTE_STAGES.map((s, i) =>
+            `<span class="vote-stage" data-stage="${i}"><span class="vote-stage-dot"></span>${s}</span>`
+        ).join('');
+        const btn = document.getElementById('btn-vote');
+        btn.parentElement.insertBefore(bar, btn.nextSibling);
+    }
+    bar.querySelectorAll('.vote-stage').forEach(el => {
+        const s = parseInt(el.dataset.stage, 10);
+        el.classList.remove('active', 'done');
+        if (s < stage) el.classList.add('done');
+        else if (s === stage) el.classList.add('active');
+    });
+    bar.style.display = 'flex';
+}
+function hideVoteProgress() {
+    const bar = document.getElementById('vote-progress');
+    if (bar) bar.style.display = 'none';
+}
+
 window.castVote = async function() {
     if (selectedChoice === null) return showMsg('Select a choice first', 'error');
 
     const btn = document.getElementById('btn-vote');
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner"></span>Building proof...';
+    btn.innerHTML = '<span class="spinner"></span>Signing…';
+    showVoteProgress(0);
 
     try {
         // Generate a voter secret (in production, derived from wallet signature)
@@ -370,12 +399,16 @@ window.castVote = async function() {
             tree = MerkleTree.fromLeaves([leaf], 20);
         }
 
+        btn.innerHTML = '<span class="spinner"></span>Building witness…';
+        showVoteProgress(1);
+
         const maxChoices = BigInt(currentPollData ? currentPollData.choices.length : 256);
         const witnessResult = buildVoteCastWitness({
             tree, voterIdx, pollId, voterSecret, voteChoice, voterWeight, maxChoices
         });
 
-        btn.innerHTML = '<span class="spinner"></span>Generating proof...';
+        btn.innerHTML = '<span class="spinner"></span>Generating proof…';
+        showVoteProgress(2);
 
         // Try WASM prover in Web Worker first (non-blocking), fall back to server
         let proofData;
@@ -400,7 +433,8 @@ window.castVote = async function() {
             proofData = await resp.json();
         }
 
-        btn.innerHTML = '<span class="spinner"></span>Submitting vote...';
+        btn.innerHTML = '<span class="spinner"></span>Submitting vote…';
+        showVoteProgress(3);
 
         // Build vote submission — when client proved, send only proof bytes (server
         // never sees voterSecret or voteChoice). Server fallback sends full witness.
@@ -449,11 +483,13 @@ window.castVote = async function() {
 
         showMsg('Vote cast successfully! Your vote is anonymous and verifiable.', 'success');
         btn.style.display = 'none';
+        hideVoteProgress();
 
         // Refresh vote count
         loadPoll(currentPollId);
     } catch (err) {
         showMsg('Vote failed: ' + walletError(err, 'castVote'), 'error');
+        hideVoteProgress();
     } finally {
         btn.disabled = false;
         btn.textContent = 'Cast Vote';
