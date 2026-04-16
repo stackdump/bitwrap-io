@@ -58,6 +58,68 @@ func (c *TransferSynthCircuit) Define(api frontend.API) error {
 	return nil
 }
 
+// TransferFromSynthCircuit is generated from schema action "transferFrom". Parity target: TransferFromCircuit in prover/circuits.go.
+type TransferFromSynthCircuit struct {
+	PreStateRoot  frontend.Variable `gnark:",public"`
+	PostStateRoot frontend.Variable `gnark:",public"`
+	From          frontend.Variable `gnark:",public"`
+	To            frontend.Variable `gnark:",public"`
+	Caller        frontend.Variable `gnark:",public"`
+	Amount        frontend.Variable `gnark:",public"`
+
+	BalanceFrom   frontend.Variable
+	AllowanceFrom frontend.Variable
+
+	BalancePath    [10]frontend.Variable
+	BalanceIndices [10]frontend.Variable
+	AllowancePath  [10]frontend.Variable
+	AllowanceIdx   [10]frontend.Variable
+}
+
+func (c *TransferFromSynthCircuit) Define(api frontend.API) error {
+	// Range checks from Action.Guard "balances[from] >= amount && allowances[from][caller] >= amount"
+	diff1 := api.Sub(c.BalanceFrom, c.Amount)
+	api.ToBinary(diff1, 64)
+	diff2 := api.Sub(c.AllowanceFrom, c.Amount)
+	api.ToBinary(diff2, 64)
+
+	// Balance Merkle proof (depth 10)
+	balanceLeaf := synthMimcHash(api, c.From, c.BalanceFrom)
+	current := balanceLeaf
+	for i := 0; i < 10; i++ {
+		api.AssertIsBoolean(c.BalanceIndices[i])
+		left := api.Select(c.BalanceIndices[i], c.BalancePath[i], current)
+		right := api.Select(c.BalanceIndices[i], current, c.BalancePath[i])
+		current = synthMimcHash(api, left, right)
+	}
+	balanceRoot := current
+
+	// Allowance Merkle proof — nested key allowanceKey = hash(from, caller)
+	allowanceKey := synthMimcHash(api, c.From, c.Caller)
+	allowanceLeaf := synthMimcHash(api, allowanceKey, c.AllowanceFrom)
+	current = allowanceLeaf
+	for i := 0; i < 10; i++ {
+		api.AssertIsBoolean(c.AllowanceIdx[i])
+		left := api.Select(c.AllowanceIdx[i], c.AllowancePath[i], current)
+		right := api.Select(c.AllowanceIdx[i], current, c.AllowancePath[i])
+		current = synthMimcHash(api, left, right)
+	}
+	allowanceRoot := current
+
+	// Composite pre-state root = hash(balanceRoot, allowanceRoot)
+	computedRoot := synthMimcHash(api, balanceRoot, allowanceRoot)
+	api.AssertIsEqual(computedRoot, c.PreStateRoot)
+
+	// Post-state: decremented balance + decremented allowance
+	newBalance := api.Sub(c.BalanceFrom, c.Amount)
+	newAllowance := api.Sub(c.AllowanceFrom, c.Amount)
+	postBalanceLeaf := synthMimcHash(api, c.From, newBalance)
+	postAllowanceLeaf := synthMimcHash(api, allowanceKey, newAllowance)
+	computedPost := synthMimcHash(api, postBalanceLeaf, postAllowanceLeaf)
+	api.AssertIsEqual(computedPost, c.PostStateRoot)
+	return nil
+}
+
 // MintSynthCircuit is generated from schema action "mint". Parity target: MintCircuit in prover/circuits.go.
 type MintSynthCircuit struct {
 	PreStateRoot  frontend.Variable `gnark:",public"`

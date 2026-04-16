@@ -351,9 +351,10 @@ func (c *VoteCastCircuit) Define(api frontend.API) error {
 // the hand-written versions once every circuit has a synthesized twin.
 func RegisterStandardCircuits(p *Prover) error {
 	circuits := map[string]frontend.Circuit{
-		"transfer":      &TransferCircuit{},
-		"transferSynth": &TransferSynthCircuit{}, // synthesized twin, slice 2.4
-		"transferFrom":  &TransferFromCircuit{},
+		"transfer":          &TransferCircuit{},
+		"transferSynth":     &TransferSynthCircuit{},     // synthesized twin, slice 2.4a
+		"transferFrom":      &TransferFromCircuit{},
+		"transferFromSynth": &TransferFromSynthCircuit{}, // synthesized twin, slice 2.4b
 		"mint":         &MintCircuit{},
 		"mintSynth":    &MintSynthCircuit{}, // synthesized twin, slice 2.1
 		"burn":         &BurnCircuit{},

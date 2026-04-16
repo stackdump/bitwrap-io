@@ -205,6 +205,28 @@ func TestTransferSynthParity(t *testing.T) {
 	assert.SolvingFailed(&prover.TransferSynthCircuit{}, tamperedSynth, test.WithCurves(ecc.BN254))
 }
 
+func TestTransferFromSynthSameConstraintCount(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping compile test in short mode")
+	}
+	p := prover.NewProver()
+	a, err := p.CompileCircuit("transferFrom", &prover.TransferFromCircuit{})
+	if err != nil {
+		t.Fatalf("compile TransferFromCircuit: %v", err)
+	}
+	b, err := p.CompileCircuit("transferFromSynth", &prover.TransferFromSynthCircuit{})
+	if err != nil {
+		t.Fatalf("compile TransferFromSynthCircuit: %v", err)
+	}
+	if a.Constraints != b.Constraints || a.PublicVars != b.PublicVars || a.PrivateVars != b.PrivateVars {
+		t.Errorf("transferFrom parity failed: hand=%d/%d/%d synth=%d/%d/%d",
+			a.Constraints, a.PublicVars, a.PrivateVars,
+			b.Constraints, b.PublicVars, b.PrivateVars)
+	}
+	t.Logf("both transferFrom circuits: %d constraints, %d public, %d private",
+		b.Constraints, b.PublicVars, b.PrivateVars)
+}
+
 func TestTransferSynthSameConstraintCount(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping compile test in short mode")

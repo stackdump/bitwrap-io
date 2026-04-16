@@ -114,12 +114,17 @@ func indexExprFieldName(node guard.Node) string {
 	// Convert "balances" → "Balance" (drop trailing 's' if collection-plural);
 	// prepend each key's capitalization. Keep the exact hand-written
 	// convention by only chopping known plurals.
-	base := depluralize(baseID.Name)
-	name := capitalize(base)
-	for _, k := range keys {
-		name += capitalize(k)
+	// Convention in hand-written circuits: use only the *first* (outer) key
+	// to form the field name. `balances[from]` → `BalanceFrom`;
+	// `allowances[from][caller]` → `AllowanceFrom` (NOT AllowanceFromCaller).
+	// The remaining keys are folded into a derived `<base>Key` value at
+	// circuit time (e.g., `allowanceKey = hash(from, caller)`), separately
+	// emitted by the generator.
+	if len(keys) == 0 {
+		return ""
 	}
-	return name
+	base := depluralize(baseID.Name)
+	return capitalize(base) + capitalize(keys[0])
 }
 
 func capitalize(s string) string {

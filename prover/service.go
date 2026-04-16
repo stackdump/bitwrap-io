@@ -169,52 +169,63 @@ func (f *ArcnetWitnessFactory) CreateAssignment(circuitName string, witness map[
 		}
 		return assignment, nil
 
-	case "transferFrom":
-		assignment := &TransferFromCircuit{}
+	case "transferFrom", "transferFromSynth":
+		// Shared witness schema — same field names and dimensions.
+		var pre, post, from, to, caller, amount, balanceFrom, allowanceFrom frontend.Variable
+		var balPath, balIdx, allowPath, allowIdx [10]frontend.Variable
 		var err error
-		if assignment.PreStateRoot, err = goprover.ParseWitnessField(witness, "preStateRoot"); err != nil {
+		if pre, err = goprover.ParseWitnessField(witness, "preStateRoot"); err != nil {
 			return nil, err
 		}
-		if assignment.PostStateRoot, err = goprover.ParseWitnessField(witness, "postStateRoot"); err != nil {
+		if post, err = goprover.ParseWitnessField(witness, "postStateRoot"); err != nil {
 			return nil, err
 		}
-		if assignment.From, err = goprover.ParseWitnessField(witness, "from"); err != nil {
+		if from, err = goprover.ParseWitnessField(witness, "from"); err != nil {
 			return nil, err
 		}
-		if assignment.To, err = goprover.ParseWitnessField(witness, "to"); err != nil {
+		if to, err = goprover.ParseWitnessField(witness, "to"); err != nil {
 			return nil, err
 		}
-		if assignment.Caller, err = goprover.ParseWitnessField(witness, "caller"); err != nil {
+		if caller, err = goprover.ParseWitnessField(witness, "caller"); err != nil {
 			return nil, err
 		}
-		if assignment.Amount, err = goprover.ParseWitnessField(witness, "amount"); err != nil {
+		if amount, err = goprover.ParseWitnessField(witness, "amount"); err != nil {
 			return nil, err
 		}
-		if assignment.BalanceFrom, err = goprover.ParseWitnessField(witness, "balanceFrom"); err != nil {
+		if balanceFrom, err = goprover.ParseWitnessField(witness, "balanceFrom"); err != nil {
 			return nil, err
 		}
-		if assignment.AllowanceFrom, err = goprover.ParseWitnessField(witness, "allowanceFrom"); err != nil {
+		if allowanceFrom, err = goprover.ParseWitnessField(witness, "allowanceFrom"); err != nil {
 			return nil, err
 		}
 		for i := 0; i < 10; i++ {
-			key := fmt.Sprintf("balancePath%d", i)
-			if assignment.BalancePath[i], err = goprover.ParseWitnessField(witness, key); err != nil {
+			if balPath[i], err = goprover.ParseWitnessField(witness, fmt.Sprintf("balancePath%d", i)); err != nil {
 				return nil, err
 			}
-			key = fmt.Sprintf("balanceIndex%d", i)
-			if assignment.BalanceIndices[i], err = goprover.ParseWitnessField(witness, key); err != nil {
+			if balIdx[i], err = goprover.ParseWitnessField(witness, fmt.Sprintf("balanceIndex%d", i)); err != nil {
 				return nil, err
 			}
-			key = fmt.Sprintf("allowancePath%d", i)
-			if assignment.AllowancePath[i], err = goprover.ParseWitnessField(witness, key); err != nil {
+			if allowPath[i], err = goprover.ParseWitnessField(witness, fmt.Sprintf("allowancePath%d", i)); err != nil {
 				return nil, err
 			}
-			key = fmt.Sprintf("allowanceIndex%d", i)
-			if assignment.AllowanceIdx[i], err = goprover.ParseWitnessField(witness, key); err != nil {
+			if allowIdx[i], err = goprover.ParseWitnessField(witness, fmt.Sprintf("allowanceIndex%d", i)); err != nil {
 				return nil, err
 			}
 		}
-		return assignment, nil
+		if circuitName == "transferFrom" {
+			return &TransferFromCircuit{
+				PreStateRoot: pre, PostStateRoot: post, From: from, To: to, Caller: caller, Amount: amount,
+				BalanceFrom: balanceFrom, AllowanceFrom: allowanceFrom,
+				BalancePath: balPath, BalanceIndices: balIdx,
+				AllowancePath: allowPath, AllowanceIdx: allowIdx,
+			}, nil
+		}
+		return &TransferFromSynthCircuit{
+			PreStateRoot: pre, PostStateRoot: post, From: from, To: to, Caller: caller, Amount: amount,
+			BalanceFrom: balanceFrom, AllowanceFrom: allowanceFrom,
+			BalancePath: balPath, BalanceIndices: balIdx,
+			AllowancePath: allowPath, AllowanceIdx: allowIdx,
+		}, nil
 
 	case "vestClaim":
 		assignment := &VestingClaimCircuit{}

@@ -130,7 +130,7 @@ func TestAllCircuitsCompile(t *testing.T) {
 		t.Fatalf("RegisterStandardCircuits: %v", err)
 	}
 
-	expected := []string{"transfer", "transferSynth", "transferFrom", "mint", "mintSynth", "burn", "burnSynth", "approve", "vestClaim", "voteCast"}
+	expected := []string{"transfer", "transferSynth", "transferFrom", "transferFromSynth", "mint", "mintSynth", "burn", "burnSynth", "approve", "vestClaim", "voteCast"}
 	circuits := p.ListCircuits()
 
 	if len(circuits) != len(expected) {
