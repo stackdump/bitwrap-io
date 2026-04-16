@@ -114,6 +114,32 @@ export async function loadKeys(name, keyUrl) {
   return result;
 }
 
+// Load only the verifying key for a circuit. Used by the in-browser
+// "Verify Proof" button so users don't have to download the proving
+// key (which can be many MB for larger circuits). `vkUrl` should point
+// to a raw gnark-serialized VerifyingKey — typically /api/vk/{name}.
+export async function loadVerifyOnly(name, vkUrl) {
+  await initProver();
+  const cacheKey = `__verify:${name}`;
+  if (_keyCache[cacheKey]) return _keyCache[cacheKey];
+
+  const resp = await fetch(vkUrl);
+  if (!resp.ok) {
+    throw new Error(`VK fetch for ${name} failed: ${resp.status}`);
+  }
+  const vkBytes = new Uint8Array(await resp.arrayBuffer());
+
+  if (_worker) {
+    const result = await sendWorkerMessage('loadVerifyOnly', { name, vkBytes });
+    _keyCache[cacheKey] = result;
+    return result;
+  }
+  const result = bitwrapProver.loadVerifyOnly(name, vkBytes);
+  if (result.error) throw new Error(result.error);
+  _keyCache[cacheKey] = result;
+  return result;
+}
+
 // Generate a Groth16 proof — runs in Web Worker (non-blocking).
 export async function prove(circuitName, witness) {
   await initProver();

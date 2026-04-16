@@ -144,16 +144,17 @@ func (s *Server) handleCreatePoll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	poll := &store.Poll{
-		ID:               pollID,
-		Title:            req.Title,
-		Description:      req.Description,
-		Choices:          req.Choices,
-		Creator:          strings.ToLower(req.Creator),
-		CreatedAt:        now,
-		ExpiresAt:        expiresAt,
-		Status:           "active",
-		VoterCommitments: req.VoterCommitments,
-		RegistryRoot:     req.RegistryRoot,
+		ID:                pollID,
+		Title:             req.Title,
+		Description:       req.Description,
+		Choices:           req.Choices,
+		Creator:           strings.ToLower(req.Creator),
+		CreatedAt:         now,
+		ExpiresAt:         expiresAt,
+		Status:            "active",
+		VoterCommitments:  req.VoterCommitments,
+		RegistryRoot:      req.RegistryRoot,
+		VoteSchemaVersion: 2, // coercion-resistant nonce-augmented scheme; legacy polls keep v1
 	}
 
 	// Compute registry root from commitments if provided but root not set
@@ -237,6 +238,19 @@ func (s *Server) handleCastVote(w http.ResponseWriter, r *http.Request) {
 	if poll.RegistryRoot == "" {
 		http.Error(w, "voter registry is empty — register before voting", http.StatusBadRequest)
 		return
+	}
+
+	// Registry root must be under a creator-signed acknowledgement. Without
+	// this, the server could inject a shadow commitment between register
+	// and vote. We skip the check on polls created before the feature
+	// landed (no RegistryRootSigs entry yet means legacy; those polls keep
+	// their pre-existing trust model).
+	if len(poll.RegistryRootSigs) > 0 {
+		latest := poll.RegistryRootSigs[len(poll.RegistryRootSigs)-1]
+		if latest.Root != poll.RegistryRoot {
+			http.Error(w, "registry root has new registrations awaiting creator sign-off; try again shortly", http.StatusConflict)
+			return
+		}
 	}
 
 	// Petri net runtime gate (phase 2.7): replay past events through the
@@ -510,6 +524,19 @@ func (s *Server) handleRevealVote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Persist the (nullifier, choice, secret) bundle so the tally-proof
+	// witness builder can later fold these reveals through the Petri net
+	// `castVote` arc in ZK. This file is the only place the server keeps
+	// per-vote secrets; it becomes safe to delete once the tally proof
+	// has been generated and the poll is finalized.
+	if err := s.store.SaveRevealBundle(pollID, store.RevealBundle{
+		Nullifier: req.Nullifier,
+		Choice:    req.VoteChoice,
+		Secret:    req.VoterSecret,
+	}); err != nil {
+		log.Printf("SaveRevealBundle failed (non-fatal for reveal): %v", err)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status": "revealed",
@@ -735,4 +762,142 @@ func extractPollIDSegment(path, segment string) string {
 		return ""
 	}
 	return strings.TrimSuffix(path, suffix)
+}
+
+// handleSignRegistryRoot records a creator's EIP-191 signature over the
+// current (pollId, root, count) tuple. Only the creator address can
+// sign. The server appends to RegistryRootSigs; the count field must be
+// strictly greater than any prior signature's count, so replaying an
+// old signature after more voters register is rejected. Voters check
+// that poll.RegistryRoot matches the latest signed root before casting.
+func (s *Server) handleSignRegistryRoot(w http.ResponseWriter, r *http.Request) {
+	pollID := extractPollIDSegment(r.URL.Path, "sign-registry-root")
+	if pollID == "" {
+		http.Error(w, "Poll ID required", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Signature string `json:"signature"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil || req.Signature == "" {
+		http.Error(w, "signature required", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	poll, err := s.store.ReadPoll(pollID)
+	if err != nil {
+		http.Error(w, "Poll not found", http.StatusNotFound)
+		return
+	}
+	if poll.Status != "active" {
+		http.Error(w, "poll is not active", http.StatusBadRequest)
+		return
+	}
+	if poll.RegistryRoot == "" || len(poll.VoterCommitments) == 0 {
+		http.Error(w, "registry is empty", http.StatusBadRequest)
+		return
+	}
+
+	count := len(poll.VoterCommitments)
+	if n := len(poll.RegistryRootSigs); n > 0 {
+		prev := poll.RegistryRootSigs[n-1]
+		if count <= prev.Count {
+			// Replay / downgrade attempt: refuse to persist an older or
+			// equal-count signature. Counts must strictly increase so a
+			// captured earlier signature can't be re-submitted after more
+			// registrations.
+			http.Error(w, "registry count must exceed prior signed count", http.StatusConflict)
+			return
+		}
+		if prev.Root == poll.RegistryRoot {
+			// Idempotent: already signed at this exact state. Accept
+			// without appending a duplicate.
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"status": "already-signed", "count": prev.Count})
+			return
+		}
+	}
+
+	msg := fmt.Sprintf("bitwrap-registry-root:%s:%s:%d", pollID, poll.RegistryRoot, count)
+	if !VerifySignature(msg, req.Signature, poll.Creator) {
+		http.Error(w, "signature does not match poll creator", http.StatusForbidden)
+		return
+	}
+
+	poll.RegistryRootSigs = append(poll.RegistryRootSigs, store.RegistryRootSig{
+		Root:      poll.RegistryRoot,
+		Count:     count,
+		Signature: req.Signature,
+		SignedAt:  time.Now().UTC(),
+	})
+	if err := s.store.SavePoll(poll); err != nil {
+		http.Error(w, "failed to persist signature", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"status": "signed",
+		"root":   poll.RegistryRoot,
+		"count":  count,
+	})
+}
+
+// handleGenerateTallyProof runs the ZK prover over the poll's reveal
+// bundles and persists a TallyProofCircuit proof. Anyone may request
+// generation — the witness data is already persisted during the reveal
+// phase, and the resulting artifact is public and independently
+// verifiable against the tallyProof verifying key.
+func (s *Server) handleGenerateTallyProof(w http.ResponseWriter, r *http.Request) {
+	pollID := extractPollIDSegment(r.URL.Path, "tally-proof")
+	if pollID == "" {
+		http.Error(w, "Poll ID required", http.StatusBadRequest)
+		return
+	}
+	if s.proverSvc == nil {
+		http.Error(w, "prover not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	poll, err := s.store.ReadPoll(pollID)
+	if err != nil {
+		http.Error(w, "Poll not found", http.StatusNotFound)
+		return
+	}
+	if poll.Status != "closed" {
+		http.Error(w, "Tally proof can only be generated after the poll is closed", http.StatusBadRequest)
+		return
+	}
+
+	artifact, err := GenerateTallyProof(s.store, s.proverSvc.Prover(), pollID)
+	if err != nil {
+		log.Printf("GenerateTallyProof(%s): %v", pollID, err)
+		http.Error(w, fmt.Sprintf("tally proof failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(artifact)
+}
+
+// handleGetTallyProof returns the cached tally proof artifact so any
+// client can independently verify it against the tallyProof verifying
+// key (served from /api/vk/tallyProof).
+func (s *Server) handleGetTallyProof(w http.ResponseWriter, r *http.Request) {
+	pollID := extractPollIDSegment(r.URL.Path, "tally-proof")
+	if pollID == "" {
+		http.Error(w, "Poll ID required", http.StatusBadRequest)
+		return
+	}
+
+	artifact, err := s.store.ReadTallyProof(pollID)
+	if err != nil {
+		http.Error(w, "no tally proof generated yet", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(artifact)
 }

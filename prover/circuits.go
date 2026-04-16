@@ -19,14 +19,21 @@ import (
 // factory in prover/service.go can dispatch by the same key.
 func RegisterStandardCircuits(p *Prover) error {
 	circuits := map[string]frontend.Circuit{
-		"transfer":     &TransferCircuit{},
-		"transferFrom": &TransferFromCircuit{},
-		"mint":         &MintCircuit{},
-		"burn":         &BurnCircuit{},
-		"approve":      &ApproveCircuit{},
-		"vestClaim":    &VestingClaimCircuit{},
-		"voteCast":     &VoteCastCircuit{},
+		"transfer":       &TransferCircuit{},
+		"transferFrom":   &TransferFromCircuit{},
+		"mint":           &MintCircuit{},
+		"burn":           &BurnCircuit{},
+		"approve":        &ApproveCircuit{},
+		"vestClaim":      &VestingClaimCircuit{},
+		"voteCast":       &VoteCastCircuit{},
+		"tallyProof":     &TallyProofCircuit16{}, // legacy alias, kept for back-compat
+		"tallyProof_16":  &TallyProofCircuit16{},
+		"tallyProof_64":  &TallyProofCircuit64{},
 	}
+	// tallyProof_256 is lazy: ~30-60s compile + hundreds of MB of keys.
+	// Most polls don't need it; server starts without it and pays the cost
+	// on first request from a poll that does.
+	RegisterLazyCircuit("tallyProof_256", func() frontend.Circuit { return &TallyProofCircuit256{} })
 	return RegisterCircuitsParallel(p, circuits)
 }
 

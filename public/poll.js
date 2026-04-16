@@ -259,11 +259,21 @@ async function loadPoll(pollId) {
         if (poll.status === 'active') {
             regBar.style.display = 'flex';
             fetch(`/api/polls/${pollId}/registry`).then(r => r.json()).then(reg => {
-                document.getElementById('registry-info').textContent =
-                    `${reg.count} registered voter${reg.count !== 1 ? 's' : ''}`;
+                const signedCount = (poll.registryRootSigs && poll.registryRootSigs.length)
+                    ? poll.registryRootSigs[poll.registryRootSigs.length - 1].count
+                    : 0;
+                const pending = Math.max(0, reg.count - signedCount);
+                const base = `${reg.count} registered voter${reg.count !== 1 ? 's' : ''}`;
+                document.getElementById('registry-info').textContent = pending > 0
+                    ? `${base} \u00b7 ${pending} awaiting creator sign-off`
+                    : base;
                 // If the current wallet's commitment is already in the registry,
                 // mark the button as already-registered so we don't re-sign.
                 markAlreadyRegisteredIfPossible(pollId, reg.commitments || [], btnRegister);
+                // Surface a "Sign current registry" button to the creator
+                // when there are pending registrations not yet covered by
+                // a sign-off. Voter-side UI shows a passive warning only.
+                renderRegistrySignButton(poll, reg, pending);
             }).catch(() => {
                 document.getElementById('registry-info').textContent = '0 registered voters';
             });
@@ -280,6 +290,9 @@ async function loadPoll(pollId) {
             `).join('');
             btnVote.style.display = '';
             btnReveal.style.display = 'none';
+            // Schema-version banner: explain the backup requirement up front.
+            const banner = document.getElementById('v2-backup-banner');
+            if (banner) banner.style.display = ((poll.voteSchemaVersion || 1) >= 2) ? 'block' : 'none';
 
             // Show close button if current wallet is the creator
             btnClose.style.display = 'none';
@@ -301,12 +314,77 @@ async function loadPoll(pollId) {
             btnVote.style.display = 'none';
             btnClose.style.display = 'none';
             btnReveal.style.display = '';
-            btnReveal.textContent = findRevealData(pollId) ? 'Reveal My Vote' : 'Reveal My Vote (re-sign to recover)';
+            if (findRevealData(pollId)) {
+                btnReveal.textContent = 'Reveal My Vote';
+            } else if ((poll.voteSchemaVersion || 1) >= 2) {
+                btnReveal.textContent = 'Reveal My Vote (upload backup)';
+            } else {
+                btnReveal.textContent = 'Reveal My Vote (re-sign to recover)';
+            }
         }
     } catch (err) {
         showMsg('Failed to load poll: ' + err.message, 'error');
     }
 }
+
+// renderRegistrySignButton toggles the creator-only "Sign Current
+// Registry" button visibility. Shows when the connected wallet is the
+// poll creator AND there are pending registrations not yet covered by
+// a signature. Voters never see this — they only see the pending count
+// in the registry-info line.
+function renderRegistrySignButton(poll, registry, pending) {
+    const btn = document.getElementById('btn-sign-registry');
+    if (!btn) return;
+    btn.style.display = 'none';
+    if (!poll || poll.status !== 'active' || pending <= 0) return;
+    const provider = getWalletProvider();
+    if (!provider || !poll.creator) return;
+    provider.request({ method: 'eth_accounts' }).then(accts => {
+        if (accts.length > 0 && accts[0].toLowerCase() === poll.creator.toLowerCase()) {
+            btn.style.display = '';
+            btn.dataset.pending = String(pending);
+            btn.dataset.root = registry.root;
+            btn.dataset.count = String(registry.count);
+        }
+    }).catch(() => {});
+}
+
+window.signRegistryRoot = async function() {
+    const pollId = window.currentPollId;
+    const btn = document.getElementById('btn-sign-registry');
+    if (!pollId || !btn) return;
+    const root = btn.dataset.root;
+    const count = btn.dataset.count;
+    if (!root || !count) return;
+
+    const orig = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Signing...';
+    try {
+        const provider = getWalletProvider();
+        if (!provider) throw new Error('wallet unavailable');
+        const accts = await provider.request({ method: 'eth_requestAccounts' });
+        const msg = `bitwrap-registry-root:${pollId}:${root}:${count}`;
+        const sig = await provider.request({
+            method: 'personal_sign',
+            params: [msg, accts[0]],
+        });
+        const resp = await fetch(`/api/polls/${pollId}/sign-registry-root`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ signature: sig }),
+        });
+        const text = await resp.text();
+        if (!resp.ok) throw new Error(text || `HTTP ${resp.status}`);
+        showMsg('Registry signed — voters can now cast ballots.', 'success');
+        loadPoll(pollId);
+    } catch (err) {
+        showMsg('Sign failed: ' + (err.message || err), 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = orig;
+    }
+};
 
 window.selectChoice = function(el, idx) {
     document.querySelectorAll('.choice-option').forEach(o => o.classList.remove('selected'));
@@ -351,27 +429,32 @@ window.castVote = async function() {
     showVoteProgress(0);
 
     try {
-        // Generate a voter secret (in production, derived from wallet signature)
-        // For now, use a random secret — users can connect wallet for deterministic secrets
+        // voterSecret derivation is schema-version gated. For v2 polls we
+        // combine the wallet signature with a per-voter nonce read from
+        // localStorage (created at registration time). v1 polls keep the
+        // legacy sig.slice derivation for backward compatibility.
         let voterSecret;
+        let wallet = 'anon';
+        const schemaVersion = (currentPollData && currentPollData.voteSchemaVersion) || 1;
         const provider = getWalletProvider();
         if (provider) {
             try {
                 const accounts = await provider.request({ method: 'eth_requestAccounts' });
+                wallet = accounts[0];
                 const msg = `bitwrap-vote:${currentPollId}`;
                 const sig = await provider.request({
                     method: 'personal_sign',
                     params: [msg, accounts[0]]
                 });
-                // Derive secret from signature (take first 31 bytes to stay within field)
-                voterSecret = BigInt('0x' + sig.slice(2, 64));
+                const sigDerived = BigInt('0x' + sig.slice(2, 64));
+                voterSecret = deriveVoterSecret(schemaVersion, currentPollId, wallet, sigDerived);
             } catch (e) {
                 // Wallet declined or unavailable — fall back to random
                 walletError(e, 'castVote:sign');
-                voterSecret = randomFieldElement();
+                voterSecret = deriveVoterSecret(schemaVersion, currentPollId, wallet, randomFieldElement());
             }
         } else {
-            voterSecret = randomFieldElement();
+            voterSecret = deriveVoterSecret(schemaVersion, currentPollId, wallet, randomFieldElement());
         }
 
         const pollId = BigInt('0x' + currentPollId.slice(0, 16));
@@ -475,6 +558,7 @@ window.castVote = async function() {
                 voterSecret: witnessResult.witness.voterSecret,
                 voteChoice: selectedChoice,
                 nullifier: witnessResult.witness.nullifier,
+                schemaVersion,
             }));
         } catch { /* localStorage may be unavailable */ }
 
@@ -483,7 +567,31 @@ window.castVote = async function() {
             throw new Error(text);
         }
 
-        showMsg('Vote cast successfully! Your vote is anonymous and verifiable.', 'success');
+        // v2 polls: auto-download a backup containing the nonce + reveal
+        // payload. This is the ONLY path to recover the vote if localStorage
+        // is cleared — the legacy re-sign-to-recover flow is removed so a
+        // coerced wallet signature cannot be used to deanonymize the vote.
+        if (schemaVersion >= 2) {
+            try {
+                downloadVoteBackup({
+                    pollId: currentPollId,
+                    wallet,
+                    voteChoice: selectedChoice,
+                    voterNonce: getOrCreateVoterNonce(currentPollId, wallet).toString(10),
+                    voterSecret: witnessResult.witness.voterSecret,
+                    nullifier: witnessResult.witness.nullifier,
+                    voteCommitment: witnessResult.witness.voteCommitment,
+                    schemaVersion: 2,
+                    timestamp: new Date().toISOString(),
+                });
+            } catch (e) {
+                console.warn('vote backup download failed', e);
+            }
+        }
+
+        showMsg('Vote cast successfully! Your vote is anonymous and verifiable.' +
+            (schemaVersion >= 2 ? ' A recovery backup has been downloaded — keep it safe.' : ''),
+            'success');
         btn.style.display = 'none';
         hideVoteProgress();
 
@@ -552,6 +660,7 @@ function findRevealData(pollId) {
 
 window.revealVote = async function() {
     const btn = document.getElementById('btn-reveal');
+    const schemaVersion = (currentPollData && currentPollData.voteSchemaVersion) || 1;
 
     // Path A: localStorage has the voter's secret + choice — submit directly.
     const cached = findRevealData(currentPollId);
@@ -559,10 +668,48 @@ window.revealVote = async function() {
         return submitReveal(btn, cached.nullifier, cached.voteChoice, cached.voterSecret, true);
     }
 
-    // Path B (recovery): no localStorage entry. Re-derive voterSecret from
-    // the wallet signature (EIP-191 personal_sign is deterministic), ask the
-    // voter which choice they cast, and let the server verify
-    // mimcHash(voterSecret, voteChoice) == voteCommitment.
+    // v2 polls: re-sign recovery is REMOVED because a recomputable secret
+    // from the wallet signature alone would reintroduce the coercion gap.
+    // The backup JSON auto-downloaded at vote time is the only recovery path.
+    if (schemaVersion >= 2) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span>Waiting for backup…';
+        try {
+            const payload = await readVoteBackupFile();
+            if (!payload) {
+                btn.disabled = false;
+                btn.textContent = 'Reveal My Vote';
+                return;
+            }
+            if (payload.pollId !== currentPollId) {
+                throw new Error('Backup is for a different poll.');
+            }
+            // Re-seed localStorage so future reveals use the fast path.
+            try {
+                if (payload.wallet) {
+                    localStorage.setItem(nonceKey(currentPollId, payload.wallet), payload.voterNonce);
+                }
+                localStorage.setItem(
+                    `bitwrap-vote-${currentPollId}-${payload.nullifier}`,
+                    JSON.stringify({
+                        voterSecret: payload.voterSecret,
+                        voteChoice: payload.voteChoice,
+                        nullifier: payload.nullifier,
+                        schemaVersion: 2,
+                    })
+                );
+            } catch {}
+            return submitReveal(btn, payload.nullifier, payload.voteChoice, payload.voterSecret, false);
+        } catch (err) {
+            showMsg('Backup load failed: ' + (err.message || err), 'error');
+            btn.disabled = false;
+            btn.textContent = 'Reveal My Vote';
+            return;
+        }
+    }
+
+    // v1 legacy recovery: re-sign with the wallet, ask for the choice,
+    // let the server verify mimcHash(secret, choice) == commitment.
     const provider = getWalletProvider();
     if (!provider) {
         return showMsg('No stored vote and no wallet available. Connect the wallet you voted with to recover.', 'error');
@@ -581,9 +728,6 @@ window.revealVote = async function() {
         });
         const voterSecret = BigInt('0x' + sig.slice(2, 64));
         const pollIdBig = BigInt('0x' + currentPollId.slice(0, 16));
-        // Nullifier is stored as a decimal field-element string (matches
-        // witness-builder's fieldStr convention; the server does an exact
-        // string match on it in handleRevealVote).
         const nullifier = mimcHash(voterSecret, pollIdBig).toString(10);
 
         await submitReveal(btn, nullifier, choiceIdx, voterSecret.toString(), false);
@@ -745,9 +889,193 @@ async function loadResults(pollId) {
         } else {
             nullDiv.innerHTML = nullifiers.map(n => `<div style="padding:2px 0;">${esc(n)}</div>`).join('');
         }
+
+        // Tally proof section — only meaningful after close.
+        await refreshTallyProofUI(pollId, data);
     } catch (err) {
         showMsg('Failed to load results: ' + err.message, 'error');
     }
+}
+
+// refreshTallyProofUI checks for a cached tally proof and updates the
+// results view's proof controls. The Generate button appears only when
+// the poll is closed, has at least one tallied reveal, and no proof has
+// been cached yet. Download + VK link appear once a proof exists.
+async function refreshTallyProofUI(pollId, resultsData) {
+    const statusEl = document.getElementById('tally-proof-status');
+    const btnGen = document.getElementById('btn-gen-tally-proof');
+    const btnVerify = document.getElementById('btn-verify-tally-proof');
+    const btnDL = document.getElementById('btn-dl-tally-proof');
+    const vkLink = document.getElementById('link-tally-vk');
+    const details = document.getElementById('tally-proof-details');
+    const verifyResult = document.getElementById('tally-proof-verify-result');
+
+    btnGen.style.display = 'none';
+    btnVerify.style.display = 'none';
+    btnDL.style.display = 'none';
+    vkLink.style.display = 'none';
+    details.style.display = 'none';
+    verifyResult.style.display = 'none';
+
+    if (!resultsData || resultsData.status !== 'closed') {
+        statusEl.textContent = 'Available once the poll is closed.';
+        return;
+    }
+
+    try {
+        const resp = await fetch(`/api/polls/${pollId}/tally-proof`);
+        if (resp.ok) {
+            const proof = await resp.json();
+            window.__tallyProofCache = proof;
+            const ts = proof.generatedAt ? ` \u00b7 generated ${formatDate(proof.generatedAt)}` : '';
+            statusEl.innerHTML = `<span style="color:var(--accent);">&#10003; Proof generated</span> &middot; ${proof.numReveals} reveals folded${ts}`;
+            btnVerify.style.display = '';
+            btnDL.style.display = '';
+            // Only show the VK link when the server actually persists keys; in
+            // dev mode without -key-dir the endpoint returns 503.
+            try {
+                const vkCheck = await fetch('/api/vk/' + proof.circuitName, { method: 'HEAD' });
+                if (vkCheck.ok) {
+                    vkLink.href = '/api/vk/' + proof.circuitName + '/solidity';
+                    vkLink.style.display = '';
+                } else {
+                    btnVerify.disabled = true;
+                    btnVerify.title = 'Server is not persisting verifying keys (dev mode — start with -key-dir to enable local verification).';
+                }
+            } catch {
+                btnVerify.disabled = true;
+            }
+            details.style.display = '';
+            details.textContent = formatTallyProofSummary(proof);
+            return;
+        }
+        if (resp.status !== 404) {
+            statusEl.textContent = 'Proof status unavailable.';
+            return;
+        }
+    } catch {
+        statusEl.textContent = 'Proof status unavailable.';
+        return;
+    }
+
+    // 404: no proof yet. Offer generation if there's something to prove.
+    const tallied = resultsData.talliedCount || 0;
+    if (tallied === 0) {
+        statusEl.textContent = 'No reveals recorded yet — voters must reveal before a tally proof can be built.';
+        return;
+    }
+    statusEl.textContent = 'No tally proof generated yet.';
+    btnGen.style.display = '';
+}
+
+// formatTallyProofSummary produces a compact human-readable dump of the
+// proof artifact — tallies, truncated proof bytes, public inputs.
+function formatTallyProofSummary(proof) {
+    const lines = [];
+    lines.push(`pollId: ${proof.pollId}`);
+    lines.push(`circuit: ${proof.circuitName}`);
+    lines.push(`numReveals: ${proof.numReveals}`);
+    lines.push(`tallies: [${(proof.tallies || []).join(', ')}]`);
+    const bytes = proof.proofBytes || '';
+    lines.push(`proofBytes (base64, ${bytes.length} chars): ${bytes.slice(0, 64)}${bytes.length > 64 ? '...' : ''}`);
+    const pubs = proof.publicInputs || [];
+    lines.push(`publicInputs (${pubs.length}):`);
+    pubs.forEach((p, i) => lines.push(`  [${i}] ${p}`));
+    return lines.join('\n');
+}
+
+window.generateTallyProof = async function() {
+    const pollId = window.currentPollId;
+    if (!pollId) return;
+    const btn = document.getElementById('btn-gen-tally-proof');
+    const statusEl = document.getElementById('tally-proof-status');
+    const orig = btn.textContent;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Proving...';
+    statusEl.textContent = 'Running Groth16 prover over the castVote Petri net transition...';
+    try {
+        const resp = await fetch(`/api/polls/${pollId}/tally-proof`, { method: 'POST' });
+        const text = await resp.text();
+        if (!resp.ok) {
+            throw new Error(text || `HTTP ${resp.status}`);
+        }
+        // Refresh the panel by calling loadResults so everything re-pulls.
+        await loadResults(pollId);
+        showMsg('Tally proof generated.', 'success');
+    } catch (err) {
+        showMsg('Proof generation failed: ' + err.message, 'error');
+        statusEl.textContent = 'No tally proof generated yet.';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = orig;
+    }
+};
+
+window.downloadTallyProof = function() {
+    const proof = window.__tallyProofCache;
+    if (!proof) return;
+    const blob = new Blob([JSON.stringify(proof, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `tally-proof-${proof.pollId}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+};
+
+// verifyTallyProof runs groth16.Verify in the browser via WASM. Fetches
+// the verifying key from /api/vk/{circuitName}, loads it verify-only into
+// the WASM prover (no proving key download — can be megabytes), then
+// calls verify() against the cached proof + public-witness bytes.
+// Updates the inline result area with a pass/fail indicator.
+window.verifyTallyProof = async function() {
+    const proof = window.__tallyProofCache;
+    const resultEl = document.getElementById('tally-proof-verify-result');
+    const btn = document.getElementById('btn-verify-tally-proof');
+    if (!proof) return;
+
+    if (!proof.publicWitnessBytes) {
+        resultEl.style.display = '';
+        resultEl.innerHTML = '<span style="color:#ff4444;">&#10007; Proof artifact missing publicWitnessBytes &mdash; re-generate the proof.</span>';
+        return;
+    }
+
+    const orig = btn.textContent;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Verifying...';
+    resultEl.style.display = '';
+    resultEl.innerHTML = '<span style="color:var(--text-muted);">Loading WASM verifier...</span>';
+
+    try {
+        const { initProver, loadVerifyOnly, verify } = await import('./prover.js');
+        await initProver();
+        await loadVerifyOnly(proof.circuitName, '/api/vk/' + proof.circuitName);
+
+        const proofBytes = base64ToBytes(proof.proofBytes);
+        const pubWitnessBytes = base64ToBytes(proof.publicWitnessBytes);
+
+        const result = await verify(proof.circuitName, proofBytes, pubWitnessBytes);
+        if (result && result.valid) {
+            resultEl.innerHTML = '<span style="color:var(--accent);">&#10003; Verified locally against ' + esc(proof.circuitName) + ' verifying key.</span> Nothing trusts the server.';
+        } else {
+            const errMsg = (result && result.error) ? result.error : 'verification returned false';
+            resultEl.innerHTML = '<span style="color:#ff4444;">&#10007; Verification FAILED: ' + esc(errMsg) + '</span>';
+        }
+    } catch (err) {
+        resultEl.innerHTML = '<span style="color:#ff4444;">&#10007; Verification error: ' + esc(err.message || String(err)) + '</span>';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = orig;
+    }
+};
+
+function base64ToBytes(s) {
+    const bin = atob(s);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
 }
 
 // ============ Helpers ============
@@ -781,6 +1109,85 @@ function randomFieldElement() {
     return BigInt(hex);
 }
 
+// ============ Coercion-resistant secret derivation (v2) ============
+// In v2 polls, voterSecret = mimcHash(sigDerived, voterNonce) where
+// voterNonce is a voter-chosen random field element. The nonce is
+// stored in localStorage keyed by (pollId, wallet) AND included in the
+// auto-downloaded vote-backup JSON. A coercer who obtains the wallet
+// signature alone cannot recompute the secret without the nonce.
+
+function nonceKey(pollId, wallet) {
+    return `bitwrap-nonce-${pollId}-${(wallet || '').toLowerCase()}`;
+}
+
+// getOrCreateVoterNonce returns the stored nonce for (poll, wallet) or
+// creates a new one. The nonce is persisted BEFORE being returned so
+// repeated calls across register/vote are deterministic.
+function getOrCreateVoterNonce(pollId, wallet) {
+    const key = nonceKey(pollId, wallet);
+    try {
+        const existing = localStorage.getItem(key);
+        if (existing) return BigInt(existing);
+    } catch {}
+    const fresh = randomFieldElement();
+    try { localStorage.setItem(key, fresh.toString(10)); } catch {}
+    return fresh;
+}
+
+// deriveVoterSecret yields the voterSecret for the given schema version.
+// v2 mixes a voter-chosen nonce into the sig-derived entropy; v1 uses
+// the raw signature slice (legacy, coercion-exposed).
+function deriveVoterSecret(schemaVersion, pollId, wallet, sigDerived) {
+    if (schemaVersion >= 2) {
+        const nonce = getOrCreateVoterNonce(pollId, wallet);
+        return mimcHash(sigDerived, nonce);
+    }
+    return sigDerived;
+}
+
+// downloadVoteBackup drops a small JSON file into the user's Downloads
+// so their nonce+choice+secret survive a localStorage wipe. The only
+// recovery path for v2 polls — the re-sign route is removed because it
+// would reintroduce coercion.
+function downloadVoteBackup(payload) {
+    const name = `vote-backup-${payload.pollId}-${payload.nullifier.slice(0, 12)}.json`;
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+// readVoteBackupFile prompts for a JSON file and returns the parsed
+// reveal payload. Used on the v2 reveal path when localStorage has
+// been cleared but the voter kept the auto-downloaded backup.
+function readVoteBackupFile() {
+    return new Promise((resolve, reject) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'application/json,.json';
+        input.onchange = () => {
+            const file = input.files && input.files[0];
+            if (!file) return resolve(null);
+            const reader = new FileReader();
+            reader.onload = () => {
+                try {
+                    resolve(JSON.parse(reader.result));
+                } catch (e) {
+                    reject(new Error('Could not parse backup JSON: ' + e.message));
+                }
+            };
+            reader.onerror = () => reject(reader.error || new Error('Backup read failed'));
+            reader.readAsText(file);
+        };
+        input.click();
+    });
+}
+
 // Mark the Register button as already-done if we've previously registered
 // this wallet for this poll (tracked in localStorage). Avoids re-signing just
 // to detect registration — the server returns 409 on duplicate commitments
@@ -804,17 +1211,23 @@ window.registerForPoll = async function() {
 
     try {
         let voterSecret;
+        let wallet = 'anon';
         const provider = getWalletProvider();
+        const schemaVersion = (currentPollData && currentPollData.voteSchemaVersion) || 1;
         if (provider) {
             const accounts = await provider.request({ method: 'eth_requestAccounts' });
+            wallet = accounts[0];
             const msg = `bitwrap-vote:${currentPollId}`;
             const sig = await provider.request({
                 method: 'personal_sign',
                 params: [msg, accounts[0]]
             });
-            voterSecret = BigInt('0x' + sig.slice(2, 64));
+            const sigDerived = BigInt('0x' + sig.slice(2, 64));
+            voterSecret = deriveVoterSecret(schemaVersion, currentPollId, wallet, sigDerived);
         } else {
-            voterSecret = randomFieldElement();
+            // No wallet — we still need a deterministic secret for v2 across
+            // register and vote. randomFieldElement would not be stable.
+            voterSecret = deriveVoterSecret(schemaVersion, currentPollId, wallet, randomFieldElement());
         }
 
         const voterWeight = 1n;
@@ -832,7 +1245,10 @@ window.registerForPoll = async function() {
         }
 
         const data = await resp.json();
-        showMsg(`Registered! ${data.count} voter${data.count !== 1 ? 's' : ''} in registry.`, 'success');
+        const hint = schemaVersion >= 2
+            ? ` Your per-poll nonce is saved in this browser; a backup file will be offered when you vote.`
+            : '';
+        showMsg(`Registered! ${data.count} voter${data.count !== 1 ? 's' : ''} in registry.${hint}`, 'success');
 
         try { localStorage.setItem(`bitwrap-registered-${currentPollId}`, '1'); } catch {}
 

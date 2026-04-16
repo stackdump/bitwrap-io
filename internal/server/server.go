@@ -142,6 +142,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleRegisterVoter(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/polls/") && strings.HasSuffix(r.URL.Path, "/registry"):
 		s.handleGetRegistry(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/polls/") && strings.HasSuffix(r.URL.Path, "/sign-registry-root") && r.Method == http.MethodPost:
+		s.handleSignRegistryRoot(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/polls/") && strings.HasSuffix(r.URL.Path, "/tally-proof") && r.Method == http.MethodPost:
+		s.handleGenerateTallyProof(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/polls/") && strings.HasSuffix(r.URL.Path, "/tally-proof"):
+		s.handleGetTallyProof(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/polls/"):
 		s.handleGetPoll(w, r)
 

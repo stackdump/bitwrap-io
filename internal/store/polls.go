@@ -23,6 +23,42 @@ type Poll struct {
 	// Voter registry: commitments for Merkle tree construction
 	VoterCommitments []string `json:"voterCommitments"`
 	RegistryRoot     string   `json:"registryRoot,omitempty"`
+
+	// VoteSchemaVersion selects the secret-derivation protocol.
+	// 1 = legacy: voterSecret = BigInt(sig.slice(2, 64)), fully
+	//     reconstructable from the wallet signature — coercion-exposed.
+	// 2 = nonce-augmented: voterSecret = mimcHash(sigDerived, voterNonce)
+	//     where voterNonce is a per-voter random field element the voter
+	//     alone possesses (localStorage + auto-downloaded backup). A
+	//     coerced wallet signature no longer deanonymizes the voter.
+	// Polls stored before this field existed unmarshal as 0; the server
+	// treats 0 and 1 identically (both are legacy). New polls created
+	// via handleCreatePoll are stamped with 2.
+	VoteSchemaVersion int `json:"voteSchemaVersion,omitempty"`
+
+	// RegistryRootSigs is an append-only log of creator signatures over
+	// registry-root transitions. Each entry binds (root, count) so a voter
+	// can verify — before casting — that the root the server returned has
+	// actually been acknowledged by the creator. Without this, the server
+	// can silently inject a shadow voter (commitment in registry but not
+	// in the signed set) and accept a vote from it.
+	//
+	// Semantics:
+	//   - handleRegisterVoter appends to VoterCommitments WITHOUT signing;
+	//     creator signs in batches via POST .../sign-registry-root.
+	//   - handleCastVote rejects unless the current RegistryRoot matches
+	//     the Root in the most recent RegistryRootSigs entry.
+	//   - Each signature commits to (pollId, root, count); replaying an
+	//     old sig with a lower count is caught by the count field.
+	RegistryRootSigs []RegistryRootSig `json:"registryRootSigs,omitempty"`
+}
+
+// RegistryRootSig is one entry in the creator's signed registry log.
+type RegistryRootSig struct {
+	Root      string    `json:"root"`
+	Count     int       `json:"count"`
+	Signature string    `json:"signature"`
+	SignedAt  time.Time `json:"signedAt"`
 }
 
 // VoteRecord stores a verified vote submission.
@@ -350,6 +386,134 @@ func (s *FSStore) ReadTally(pollID string) (*AggregateTally, error) {
 type PollEvent struct {
 	Action   string            `json:"action"`
 	Bindings map[string]string `json:"bindings,omitempty"`
+}
+
+// RevealBundle records the private data a voter surrendered during the
+// reveal phase, kept so the server can later build the tally-proof
+// witness. This is the ONLY place on the server where per-vote secrets
+// are persisted. Once a tally proof has been generated and the poll is
+// finalized, these bundles can be purged (PurgeReveals) — the proof
+// stands on its own.
+type RevealBundle struct {
+	Nullifier string `json:"nullifier"`
+	Choice    int    `json:"choice"`
+	Secret    string `json:"secret"` // voterSecret as decimal/hex big int
+}
+
+// SaveRevealBundle appends a reveal bundle to the poll's reveals.json.
+// Appended, not indexed by nullifier, so we keep insertion order for
+// deterministic witness builds.
+func (s *FSStore) SaveRevealBundle(pollID string, bundle RevealBundle) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	clean, err := sanitizePathComponent(pollID)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(s.pollDir(), clean)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+
+	path := filepath.Join(dir, "reveals.json")
+	var bundles []RevealBundle
+	if data, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(data, &bundles)
+	}
+	// Idempotence: skip if this nullifier is already recorded. A buggy
+	// client retrying reveals shouldn't inflate the witness.
+	for _, b := range bundles {
+		if b.Nullifier == bundle.Nullifier {
+			return nil
+		}
+	}
+	bundles = append(bundles, bundle)
+
+	out, err := json.MarshalIndent(bundles, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, out, 0o644)
+}
+
+// ListRevealBundles returns all reveal bundles for a poll in insertion
+// order. Returns an empty slice if no reveals have been recorded.
+func (s *FSStore) ListRevealBundles(pollID string) ([]RevealBundle, error) {
+	clean, err := sanitizePathComponent(pollID)
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(s.pollDir(), clean, "reveals.json")
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var bundles []RevealBundle
+	if err := json.Unmarshal(data, &bundles); err != nil {
+		return nil, err
+	}
+	return bundles, nil
+}
+
+// TallyProofArtifact is what we persist to tallyproof.json after a
+// successful prove — everything a verifier needs to independently check
+// the proof against the circuit's verifying key.
+type TallyProofArtifact struct {
+	PollID             string    `json:"pollId"`
+	GeneratedAt        time.Time `json:"generatedAt"`
+	CircuitName        string    `json:"circuitName"`
+	ProofBytes         string    `json:"proofBytes"`         // base64 gnark proof
+	PublicWitnessBytes string    `json:"publicWitnessBytes"` // base64 gnark public witness — consumed by in-browser Verify
+	PublicInputs       []string  `json:"publicInputs"`       // hex-encoded public witness, circuit order (human-readable)
+	Tallies            []int64   `json:"tallies"`            // the claimed tally vector (also in PublicInputs)
+	NumReveals         int       `json:"numReveals"`
+}
+
+// SaveTallyProof persists a generated tally proof artifact.
+func (s *FSStore) SaveTallyProof(pollID string, artifact *TallyProofArtifact) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	clean, err := sanitizePathComponent(pollID)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(s.pollDir(), clean)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	path := filepath.Join(dir, "tallyproof.json")
+
+	data, err := json.MarshalIndent(artifact, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
+// ReadTallyProof returns the cached tally proof, or os.ErrNotExist if
+// none has been generated yet.
+func (s *FSStore) ReadTallyProof(pollID string) (*TallyProofArtifact, error) {
+	clean, err := sanitizePathComponent(pollID)
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(s.pollDir(), clean, "tallyproof.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var artifact TallyProofArtifact
+	if err := json.Unmarshal(data, &artifact); err != nil {
+		return nil, err
+	}
+	return &artifact, nil
 }
 
 // AppendEvent appends an event to a poll's event log.

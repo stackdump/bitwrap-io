@@ -201,6 +201,10 @@
             <div id="registry-bar" style="display:none; margin-bottom:16px; padding:12px 16px; background:var(--accent-dim); border:1px solid var(--border); border-radius:var(--radius); display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
                 <span id="registry-info" style="font-size:0.85rem; color:var(--text-muted);">0 registered voters</span>
                 <button class="btn-secondary" id="btn-register" onclick="registerForPoll()" style="padding:6px 16px; font-size:0.85rem;">Register to Vote</button>
+                <button class="btn-secondary" id="btn-sign-registry" onclick="signRegistryRoot()" style="display:none; padding:6px 16px; font-size:0.85rem; border-color:#ff8844; color:#ff8844;">Sign Current Registry</button>
+            </div>
+            <div id="v2-backup-banner" style="display:none; margin-bottom:16px; padding:10px 14px; border:1px solid #6495ed; border-radius:var(--radius); background:rgba(100,149,237,0.08); font-size:0.8rem; color:#9cb7e8;">
+                <strong>Coercion-resistant poll (v2):</strong> when you cast your vote, your browser will automatically download a small backup JSON. Keep it safe &mdash; without it, a cleared browser cache means your vote cannot be revealed. The older "re-sign to recover" path has been removed so that a captured wallet signature alone can't deanonymize your vote.
             </div>
 
             <div id="vote-choices"></div>
@@ -263,6 +267,19 @@
             <hr class="section-divider"/>
             <h3>Nullifiers (public audit log)</h3>
             <div id="results-nullifiers" style="font-family:var(--mono); font-size:0.75rem; color:var(--text-muted); max-height:200px; overflow-y:auto;"></div>
+
+            <hr class="section-divider"/>
+            <h3>Tally Proof (ZK-verified)</h3>
+            <p id="tally-proof-explainer" style="font-size:0.85rem; color:var(--text-muted); margin:0 0 12px;">A single Groth16 proof over the <code>castVote</code> Petri-net transition — shows that the posted tallies are the exact fold of the revealed votes. Anyone can verify it against the <code>tallyProof</code> verifying key.</p>
+            <div id="tally-proof-status" style="font-size:0.85rem; color:var(--text-muted); margin-bottom:12px;">Loading...</div>
+            <div id="tally-proof-actions" style="display:flex; gap:12px; flex-wrap:wrap;">
+                <button class="btn-primary" id="btn-gen-tally-proof" style="display:none;" onclick="generateTallyProof()">Generate Tally Proof</button>
+                <button class="btn-secondary" id="btn-verify-tally-proof" style="display:none; margin-left:0;" onclick="verifyTallyProof()">Verify Proof Locally</button>
+                <button class="btn-secondary" id="btn-dl-tally-proof" style="display:none; margin-left:0;" onclick="downloadTallyProof()">Download Proof JSON</button>
+                <a id="link-tally-vk" href="/api/vk/tallyProof/solidity" style="display:none; color:var(--accent); font-size:0.85rem; align-self:center;">Verifying Key (.sol) &rarr;</a>
+            </div>
+            <div id="tally-proof-verify-result" style="display:none; margin-top:10px; font-size:0.85rem;"></div>
+            <pre id="tally-proof-details" style="display:none; background:var(--bg); border:1px solid var(--border); border-radius:var(--radius); padding:12px; font-family:var(--mono); font-size:0.75rem; color:var(--text-muted); max-height:240px; overflow:auto; margin-top:12px;"></pre>
 
             <div style="margin-top:24px;">
                 <button class="btn-secondary" onclick="location.hash=currentPollId" style="margin-left:0;">Back to Poll</button>

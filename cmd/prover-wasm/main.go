@@ -32,13 +32,14 @@ func main() {
 	fmt.Println("bitwrap-prover WASM loaded")
 
 	api := map[string]interface{}{
-		"version":       js.FuncOf(version),
+		"version":        js.FuncOf(version),
 		"compileCircuit": js.FuncOf(compileCircuit),
-		"loadKeys":      js.FuncOf(loadKeys),
-		"prove":         js.FuncOf(prove),
-		"verify":        js.FuncOf(verify),
-		"mimcHash":      js.FuncOf(mimcHashJS),
-		"listCircuits":  js.FuncOf(listCircuits),
+		"loadKeys":       js.FuncOf(loadKeys),
+		"loadVerifyOnly": js.FuncOf(loadVerifyOnly),
+		"prove":          js.FuncOf(prove),
+		"verify":         js.FuncOf(verify),
+		"mimcHash":       js.FuncOf(mimcHashJS),
+		"listCircuits":   js.FuncOf(listCircuits),
 	}
 	js.Global().Set("bitwrapProver", js.ValueOf(api))
 
@@ -118,6 +119,35 @@ func loadKeys(_ js.Value, args []js.Value) interface{} {
 	})
 }
 
+// loadVerifyOnly("tallyProof", vkBytes) — load only the verifying key.
+// Used by the browser "Verify Proof" flow, where downloading the (much
+// larger) proving key would be wasteful. The circuit must still be
+// recognized by circuitByName so the VK deserializer knows which struct
+// shape to bind — but cs/pk are left nil. Any later call to prove()
+// against a verify-only entry will error cleanly.
+func loadVerifyOnly(_ js.Value, args []js.Value) interface{} {
+	if len(args) < 2 {
+		return jsError("usage: loadVerifyOnly(name, vkBytes)")
+	}
+	name := args[0].String()
+
+	if circuitByName(name) == nil {
+		return jsError(fmt.Sprintf("unknown circuit: %s", name))
+	}
+
+	vkData := jsToBytes(args[1])
+	vk := groth16.NewVerifyingKey(ecc.BN254)
+	if _, err := vk.ReadFrom(newBytesReader(vkData)); err != nil {
+		return jsError(fmt.Sprintf("load vk: %v", err))
+	}
+
+	compiled[name] = &compiledCircuit{cs: nil, pk: nil, vk: vk}
+
+	return js.ValueOf(map[string]interface{}{
+		"verifyOnly": true,
+	})
+}
+
 // prove("transfer", {from: "1", to: "2", ...}) — generate Groth16 proof
 // Returns: {proof: "...", publicInputs: [...]}
 func prove(_ js.Value, args []js.Value) interface{} {
@@ -129,6 +159,9 @@ func prove(_ js.Value, args []js.Value) interface{} {
 	cc, ok := compiled[name]
 	if !ok {
 		return jsError(fmt.Sprintf("circuit %q not loaded — call compileCircuit or loadKeys first", name))
+	}
+	if cc.pk == nil || cc.cs == nil {
+		return jsError(fmt.Sprintf("circuit %q is loaded in verify-only mode; proving requires loadKeys(name, cs, pk, vk)", name))
 	}
 
 	// Parse witness from JS object or JSON string
@@ -256,6 +289,12 @@ func circuitByName(name string) frontend.Circuit {
 		return &circuits.VestingClaimCircuit{}
 	case "voteCast":
 		return &circuits.VoteCastCircuit{}
+	case "tallyProof", "tallyProof_16":
+		return &circuits.TallyProofCircuit16{}
+	case "tallyProof_64":
+		return &circuits.TallyProofCircuit64{}
+	case "tallyProof_256":
+		return &circuits.TallyProofCircuit256{}
 	default:
 		return nil
 	}

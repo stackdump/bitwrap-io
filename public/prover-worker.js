@@ -43,6 +43,14 @@ onmessage = async function(e) {
         break;
       }
 
+      case 'loadVerifyOnly': {
+        const { name, vkBytes } = payload;
+        result = bitwrapProver.loadVerifyOnly(name, vkBytes);
+        if (result.error) throw new Error(result.error);
+        postMessage({ id, type: 'loadVerifyOnly', result });
+        break;
+      }
+
       case 'prove': {
         const { circuit, witness } = payload;
         result = bitwrapProver.prove(circuit, JSON.stringify(witness));

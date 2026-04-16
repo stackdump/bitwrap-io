@@ -368,12 +368,15 @@ func NewArcnetService(keyDir string) (*Service, *KeyStore, error) {
 // standardCircuits returns the circuit definitions (without compiling them).
 func standardCircuits() map[string]frontend.Circuit {
 	return map[string]frontend.Circuit{
-		"transfer":     &TransferCircuit{},
-		"transferFrom": &TransferFromCircuit{},
-		"mint":         &MintCircuit{},
-		"burn":         &BurnCircuit{},
-		"approve":      &ApproveCircuit{},
-		"vestClaim":    &VestingClaimCircuit{},
-		"voteCast":     &VoteCastCircuit{},
+		"transfer":       &TransferCircuit{},
+		"transferFrom":   &TransferFromCircuit{},
+		"mint":           &MintCircuit{},
+		"burn":           &BurnCircuit{},
+		"approve":        &ApproveCircuit{},
+		"vestClaim":      &VestingClaimCircuit{},
+		"voteCast":       &VoteCastCircuit{},
+		"tallyProof":     &TallyProofCircuit16{},
+		"tallyProof_16":  &TallyProofCircuit16{},
+		"tallyProof_64":  &TallyProofCircuit64{},
 	}
 }
