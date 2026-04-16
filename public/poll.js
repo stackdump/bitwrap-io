@@ -252,18 +252,21 @@ async function loadPoll(pollId) {
         const btnClose = document.getElementById('btn-close');
         const btnReveal = document.getElementById('btn-reveal');
 
-        // Load registry info
+        // Load registry info — always show the bar for active polls so the first
+        // voter has a way to register. Server rejects vote attempts on empty registries.
         const regBar = document.getElementById('registry-bar');
+        const btnRegister = document.getElementById('btn-register');
         if (poll.status === 'active') {
+            regBar.style.display = 'flex';
             fetch(`/api/polls/${pollId}/registry`).then(r => r.json()).then(reg => {
-                if (reg.count > 0 || poll.registryRoot) {
-                    regBar.style.display = 'flex';
-                    document.getElementById('registry-info').textContent =
-                        `${reg.count} registered voter${reg.count !== 1 ? 's' : ''}`;
-                } else {
-                    regBar.style.display = 'none';
-                }
-            }).catch(() => { regBar.style.display = 'none'; });
+                document.getElementById('registry-info').textContent =
+                    `${reg.count} registered voter${reg.count !== 1 ? 's' : ''}`;
+                // If the current wallet's commitment is already in the registry,
+                // mark the button as already-registered so we don't re-sign.
+                markAlreadyRegisteredIfPossible(pollId, reg.commitments || [], btnRegister);
+            }).catch(() => {
+                document.getElementById('registry-info').textContent = '0 registered voters';
+            });
         } else {
             regBar.style.display = 'none';
         }
@@ -668,6 +671,21 @@ function randomFieldElement() {
     return BigInt(hex);
 }
 
+// Mark the Register button as already-done if we've previously registered
+// this wallet for this poll (tracked in localStorage). Avoids re-signing just
+// to detect registration — the server returns 409 on duplicate commitments
+// if the user does click Register again.
+function markAlreadyRegisteredIfPossible(pollId, commitments, btn) {
+    if (!btn) return;
+    try {
+        if (localStorage.getItem(`bitwrap-registered-${pollId}`) === '1') {
+            btn.disabled = true;
+            btn.textContent = 'Registered';
+            btn.style.opacity = '0.5';
+        }
+    } catch { /* localStorage may be unavailable */ }
+}
+
 window.registerForPoll = async function() {
     if (!currentPollId) return showMsg('No poll selected', 'error');
 
@@ -705,6 +723,8 @@ window.registerForPoll = async function() {
 
         const data = await resp.json();
         showMsg(`Registered! ${data.count} voter${data.count !== 1 ? 's' : ''} in registry.`, 'success');
+
+        try { localStorage.setItem(`bitwrap-registered-${currentPollId}`, '1'); } catch {}
 
         // Update UI
         const regInfo = document.getElementById('registry-info');

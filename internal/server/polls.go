@@ -234,6 +234,11 @@ func (s *Server) handleCastVote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if poll.RegistryRoot == "" {
+		http.Error(w, "voter registry is empty — register before voting", http.StatusBadRequest)
+		return
+	}
+
 	var req castVoteRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
@@ -273,13 +278,15 @@ func (s *Server) handleCastVote(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Validate public inputs match poll registry root
-			if poll.RegistryRoot != "" && len(req.PublicInputs) >= 5 {
-				if err := prover.ValidateVoteCastPublicInputs(
-					req.PublicInputs, "", poll.RegistryRoot,
-				); err != nil {
-					http.Error(w, fmt.Sprintf("registry root mismatch: %v", err), http.StatusForbidden)
-					return
-				}
+			if len(req.PublicInputs) < 5 {
+				http.Error(w, "publicInputs required for client-side proof", http.StatusBadRequest)
+				return
+			}
+			if err := prover.ValidateVoteCastPublicInputs(
+				req.PublicInputs, "", poll.RegistryRoot,
+			); err != nil {
+				http.Error(w, fmt.Sprintf("registry root mismatch: %v", err), http.StatusForbidden)
+				return
 			}
 
 			// Verify the proof against the verifying key — no re-proving needed
@@ -295,16 +302,17 @@ func (s *Server) handleCastVote(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			if poll.RegistryRoot != "" {
-				if wRoot, ok := req.Witness["voterRegistryRoot"]; ok {
-					if err := prover.ValidateVoteCastPublicInputs(
-						[]string{req.Witness["pollId"], wRoot, req.Nullifier},
-						req.Witness["pollId"], poll.RegistryRoot,
-					); err != nil {
-						http.Error(w, fmt.Sprintf("registry root mismatch: %v", err), http.StatusForbidden)
-						return
-					}
-				}
+			wRoot, ok := req.Witness["voterRegistryRoot"]
+			if !ok {
+				http.Error(w, "witness missing voterRegistryRoot", http.StatusBadRequest)
+				return
+			}
+			if err := prover.ValidateVoteCastPublicInputs(
+				[]string{req.Witness["pollId"], wRoot, req.Nullifier, req.VoteCommitment, req.Witness["maxChoices"]},
+				req.Witness["pollId"], poll.RegistryRoot,
+			); err != nil {
+				http.Error(w, fmt.Sprintf("registry root mismatch: %v", err), http.StatusForbidden)
+				return
 			}
 
 			if err := prover.VerifyVoteCastWitness(p, req.Witness); err != nil {
@@ -314,13 +322,11 @@ func (s *Server) handleCastVote(w http.ResponseWriter, r *http.Request) {
 			}
 		} else if len(req.PublicInputs) > 0 {
 			// Proof + public inputs only — validate inputs match poll
-			if poll.RegistryRoot != "" {
-				if err := prover.ValidateVoteCastPublicInputs(
-					req.PublicInputs, "", poll.RegistryRoot,
-				); err != nil {
-					http.Error(w, fmt.Sprintf("public input validation failed: %v", err), http.StatusForbidden)
-					return
-				}
+			if err := prover.ValidateVoteCastPublicInputs(
+				req.PublicInputs, "", poll.RegistryRoot,
+			); err != nil {
+				http.Error(w, fmt.Sprintf("public input validation failed: %v", err), http.StatusForbidden)
+				return
 			}
 		}
 	}

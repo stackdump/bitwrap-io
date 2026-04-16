@@ -12,7 +12,28 @@ import (
 )
 
 // createTestPoll creates a poll via the store directly (bypasses wallet auth).
+// RegistryRoot is seeded with a dummy value so vote tests don't hit the
+// "register before voting" rejection. Use createTestPollEmptyRegistry to
+// explicitly test the empty-registry path.
 func createTestPoll(t *testing.T, srv *Server, title string, choices []string) string {
+	t.Helper()
+	poll := &store.Poll{
+		ID:           fmt.Sprintf("test%d", time.Now().UnixNano()),
+		Title:        title,
+		Choices:      choices,
+		Creator:      "0x0000000000000000000000000000000000000001",
+		CreatedAt:    time.Now().UTC(),
+		Status:       "active",
+		RegistryRoot: "0x1",
+	}
+	if err := srv.store.SavePoll(poll); err != nil {
+		t.Fatal(err)
+	}
+	_ = srv.store.AppendEvent(poll.ID, store.PollEvent{Action: "createPoll"})
+	return poll.ID
+}
+
+func createTestPollEmptyRegistry(t *testing.T, srv *Server, title string, choices []string) string {
 	t.Helper()
 	poll := &store.Poll{
 		ID:        fmt.Sprintf("test%d", time.Now().UnixNano()),
@@ -146,6 +167,23 @@ func TestListPolls(t *testing.T) {
 }
 
 // --- Vote tests ---
+
+func TestCastVoteEmptyRegistryRejected(t *testing.T) {
+	srv := testServer(t)
+	pollID := createTestPollEmptyRegistry(t, srv, "Empty Reg", []string{"Yes", "No"})
+
+	body := `{"nullifier":"0xabc","voteCommitment":"0xdef","proof":"p"}`
+	req := httptest.NewRequest("POST", "/api/polls/"+pollID+"/vote", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != 400 {
+		t.Fatalf("expected 400 for empty-registry vote, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "register before voting") {
+		t.Fatalf("expected 'register before voting' in error, got %s", w.Body.String())
+	}
+}
 
 func TestCastVote(t *testing.T) {
 	srv := testServer(t)

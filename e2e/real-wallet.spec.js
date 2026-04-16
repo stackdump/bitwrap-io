@@ -111,6 +111,58 @@ test.describe('Real-wallet poll lifecycle (client-side signing)', () => {
     expect((closed.poll || closed).creator.toLowerCase()).toBe(walletAddress);
   });
 
+  test('vote with empty registry is rejected (must register first)', async ({ request }) => {
+    // Create a poll via dev-sign API — registry starts empty
+    const devSign = await request.post('/api/dev/sign', {
+      data: { message: 'bitwrap-create-poll:Empty reg test', account: 8 },
+    });
+    const { signature, address } = await devSign.json();
+    const created = await request.post('/api/polls', {
+      data: { title: 'Empty reg test', choices: ['A', 'B'], duration: 3600, creator: address, signature },
+    });
+    const { id: pollId } = await created.json();
+
+    // Attempt to vote without registering — should be rejected
+    const voteResp = await request.post(`/api/polls/${pollId}/vote`, {
+      data: {
+        nullifier: '0x' + 'a'.padStart(64, '0'),
+        voteCommitment: '0x' + 'b'.padStart(64, '0'),
+        proof: 'dummy',
+      },
+    });
+    expect(voteResp.status()).toBe(400);
+    const text = await voteResp.text();
+    expect(text).toContain('register before voting');
+  });
+
+  test('register then vote — full happy path', async ({ request }) => {
+    const devSign = await request.post('/api/dev/sign', {
+      data: { message: 'bitwrap-create-poll:Full flow', account: 9 },
+    });
+    const { signature, address } = await devSign.json();
+    const created = await request.post('/api/polls', {
+      data: { title: 'Full flow', choices: ['Yes', 'No'], duration: 3600, creator: address, signature },
+    });
+    const { id: pollId } = await created.json();
+
+    // Register a commitment — this sets poll.RegistryRoot, unblocking votes
+    const regResp = await request.post(`/api/polls/${pollId}/register`, {
+      data: { commitment: '0x' + '7'.padStart(64, '0') },
+    });
+    expect(regResp.status()).toBe(200);
+
+    // With registry non-empty and no prover enabled in test mode, a dummy
+    // vote should be accepted (the ZK path is bypassed when proverSvc is nil).
+    const voteResp = await request.post(`/api/polls/${pollId}/vote`, {
+      data: {
+        nullifier: '0x' + 'c'.padStart(64, '0'),
+        voteCommitment: '0x' + 'd'.padStart(64, '0'),
+        proof: 'dummy',
+      },
+    });
+    expect(voteResp.status()).toBe(200);
+  });
+
   test('wrong-account signature is rejected by VerifySignature', async ({ request }) => {
     const sig = await (await request.post('/api/dev/sign', {
       data: { message: 'bitwrap-create-poll:Spoof', account: 0 },

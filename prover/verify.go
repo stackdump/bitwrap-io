@@ -125,7 +125,7 @@ func ValidateVoteCastPublicInputs(publicInputs []string, expectedPollID, expecte
 		return fmt.Errorf("proof pollId mismatch: proof=%s expected=%s", proofPollID, expectedPollID)
 	}
 
-	if expectedRegistryRoot != "" && !bigIntEqual(proofRegistryRoot, expectedRegistryRoot) {
+	if !bigIntEqual(proofRegistryRoot, expectedRegistryRoot) {
 		return fmt.Errorf("proof registryRoot mismatch: proof=%s expected=%s", proofRegistryRoot, expectedRegistryRoot)
 	}
 
