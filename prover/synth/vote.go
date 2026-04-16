@@ -28,7 +28,7 @@ func init() {
 func generateVoteCast(body *strings.Builder, schema *metamodel.Schema, action *metamodel.Action, imports map[string]bool) error {
 	_ = imports // mimc helper lives in prover/synth_runtime.go
 
-	registry := schema.StateByID("voterRegistry")
+	registry := stateByIDCI(schema, "voterRegistry")
 	if registry == nil {
 		return fmt.Errorf("voteCast synth: schema missing 'voterRegistry' state")
 	}

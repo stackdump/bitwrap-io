@@ -23,7 +23,7 @@ func init() {
 // schemas still work).
 func generateBurn(body *strings.Builder, schema *metamodel.Schema, action *metamodel.Action, imports map[string]bool) error {
 	_ = imports // mimc helper lives in prover/synth_runtime.go
-	balances := schema.StateByID("balances")
+	balances := stateByIDCI(schema, "balances")
 	if balances == nil {
 		return fmt.Errorf("burn synth: schema missing 'balances' state")
 	}

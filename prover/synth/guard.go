@@ -147,12 +147,11 @@ func capitalize(s string) string {
 	return out
 }
 
-// depluralize handles the two collection names the ERC templates use today:
-// "balances" → "balance", "allowances" → "allowance". Other names fall
-// through unchanged. Keeping this conservative so we don't mangle arbitrary
-// state IDs; slice 2.4 may need to extend it.
+// depluralize handles collection names the ERC templates use. Case-insensitive
+// so both Go-built schemas (lowercase `balances`) and .btw DSL output
+// (uppercase `BALANCES`) produce the same circuit field name.
 func depluralize(s string) string {
-	switch s {
+	switch strings.ToLower(s) {
 	case "balances":
 		return "balance"
 	case "allowances":
@@ -164,5 +163,5 @@ func depluralize(s string) string {
 	case "tallies":
 		return "tally"
 	}
-	return s
+	return strings.ToLower(s)
 }

@@ -29,8 +29,8 @@ func generateVestingClaim(body *strings.Builder, schema *metamodel.Schema, actio
 		return fmt.Errorf("vestingClaim synth: action %q must declare Roles=[owner]", action.ID)
 	}
 
-	schedules := schema.StateByID("schedules")
-	owners := schema.StateByID("owners")
+	schedules := stateByIDCI(schema, "schedules")
+	owners := stateByIDCI(schema, "owners")
 	if schedules == nil || owners == nil {
 		return fmt.Errorf("vestingClaim synth: schema missing 'schedules' or 'owners' state")
 	}

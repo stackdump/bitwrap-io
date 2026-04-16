@@ -33,7 +33,7 @@ func main() {
 	compile := flag.String("compile", "", "Compile a .btw file and output JSON schema to stdout")
 	validate := flag.String("validate", "", "Validate a .btw file: compile → generate Solidity → forge build → forge test → deploy")
 	output := flag.String("output", "", "Save generated Foundry project to this directory (use with -validate)")
-	synthesize := flag.String("synthesize", "", "Synthesize gnark circuits from an ERC template (erc020|erc05725|vote). Writes Go source to -output (or stdout).")
+	synthesize := flag.String("synthesize", "", "Synthesize gnark circuits from an ERC template (erc020|erc05725|vote) or a .btw DSL path. Writes Go source to -output (or stdout).")
 	flag.Parse()
 
 	if *compile != "" {
@@ -263,15 +263,17 @@ func runValidate(path, outputDir string) int {
 	return 0
 }
 
-// runSynthesize emits gnark circuit Go source for an ERC template. The
-// output is a single .go file the caller compiles as part of prover/.
+// runSynthesize emits gnark circuit Go source from either a hand-built ERC
+// template ("erc020"|"erc05725"|"vote") or a .btw DSL file path. This is the
+// final piece of gh#1 — circuit synthesis driven by the same .btw source
+// that generates Solidity + Foundry tests.
 //
-// Deterministic: two runs on the same template produce byte-identical output.
+// Deterministic: two runs on the same input produce byte-identical output.
 // The Makefile's `gen-circuits` target uses this in CI to catch stale
 // generated files via `git diff --exit-code`.
-func runSynthesize(template, outPath string) int {
+func runSynthesize(templateOrPath, outPath string) int {
 	var schema *metamodel.Schema
-	switch template {
+	switch templateOrPath {
 	case "erc020":
 		schema = erc.NewERC020("ERC020", "ERC", 18).Schema()
 	case "erc05725":
@@ -279,8 +281,22 @@ func runSynthesize(template, outPath string) int {
 	case "vote":
 		schema = erc.NewVote("ZKPoll").Schema()
 	default:
-		fmt.Fprintf(os.Stderr, "unknown template %q (expected erc020|erc05725|vote)\n", template)
-		return 1
+		// Treat as a .btw file path and compile via the DSL pipeline.
+		src, err := os.ReadFile(templateOrPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "unknown template %q (expected erc020|erc05725|vote|<path.btw>): %v\n", templateOrPath, err)
+			return 1
+		}
+		ast, err := dsl.Parse(string(src))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "parse %s: %v\n", templateOrPath, err)
+			return 1
+		}
+		schema, err = dsl.Build(ast)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "build schema from %s: %v\n", templateOrPath, err)
+			return 1
+		}
 	}
 
 	src, err := synth.Generate(schema, "prover")

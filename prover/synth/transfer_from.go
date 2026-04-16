@@ -28,11 +28,11 @@ func init() {
 // AllowanceIndices) so the VK stays stable.
 func generateTransferFrom(body *strings.Builder, schema *metamodel.Schema, action *metamodel.Action, imports map[string]bool) error {
 	_ = imports // mimc helper lives in prover/synth_runtime.go
-	balances := schema.StateByID("balances")
+	balances := stateByIDCI(schema, "balances")
 	if balances == nil {
 		return fmt.Errorf("transferFrom synth: schema missing 'balances' state")
 	}
-	allowances := schema.StateByID("allowances")
+	allowances := stateByIDCI(schema, "allowances")
 	if allowances == nil {
 		return fmt.Errorf("transferFrom synth: schema missing 'allowances' state")
 	}

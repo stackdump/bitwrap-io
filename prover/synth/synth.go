@@ -102,17 +102,32 @@ func register(actionID string, gen generator) {
 
 // supportsSchema returns true if the named action's generator can handle the
 // given schema. Used to skip action-name collisions between template families.
+// State lookup is case-insensitive so schemas from both Go-built templates
+// (lowercase `balances`, `allowances`) and the .btw DSL (uppercase `BALANCES`,
+// `ALLOWANCES`) work without a separate canonicalization step.
 func supportsSchema(actionID string, schema *metamodel.Schema) bool {
 	switch actionID {
 	case "mint", "burn", "transfer", "transferFrom":
-		return schema.StateByID("balances") != nil
+		return stateByIDCI(schema, "balances") != nil
 	case "approve":
-		return schema.StateByID("allowances") != nil
+		return stateByIDCI(schema, "allowances") != nil
 	case "claim":
-		return schema.StateByID("schedules") != nil && schema.StateByID("owners") != nil
+		return stateByIDCI(schema, "schedules") != nil && stateByIDCI(schema, "owners") != nil
 	default:
 		return true
 	}
+}
+
+// stateByIDCI is a case-insensitive variant of Schema.StateByID. Shared
+// between supportsSchema and the per-action generators so they all accept
+// the same inputs.
+func stateByIDCI(schema *metamodel.Schema, name string) *metamodel.State {
+	for i := range schema.States {
+		if strings.EqualFold(schema.States[i].ID, name) {
+			return &schema.States[i]
+		}
+	}
+	return nil
 }
 
 func sortedKeys(m map[string]bool) []string {
