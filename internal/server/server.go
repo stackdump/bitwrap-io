@@ -79,6 +79,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch {
+	// Deploy endpoints (self-authenticated via HMAC / token)
+	case r.URL.Path == "/webhook/github" && r.Method == http.MethodPost:
+		s.HandleDeployWebhook(w, r)
+	case r.URL.Path == "/admin/deploy" && r.Method == http.MethodPost:
+		s.HandleAdminDeploy(w, r)
+	case r.URL.Path == "/admin/logs" && r.Method == http.MethodGet:
+		s.HandleAdminLogs(w, r)
+
 	// API routes
 	case r.URL.Path == "/api/save" && r.Method == http.MethodPost:
 		s.handleSave(w, r)
