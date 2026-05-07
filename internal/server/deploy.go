@@ -201,7 +201,13 @@ func runDeploySync() (string, error) {
 		}
 		return nil
 	}
-	if err := run("git pull", "git", "pull", "--ff-only"); err != nil {
+	if err := run("git fetch", "git", "fetch", "origin", "main"); err != nil {
+		return buf.String(), err
+	}
+	if err := run("verify signature", "git", "verify-commit", "origin/main"); err != nil {
+		return buf.String(), fmt.Errorf("refusing to deploy unsigned/untrusted HEAD: %w", err)
+	}
+	if err := run("fast-forward", "git", "merge", "--ff-only", "origin/main"); err != nil {
 		return buf.String(), err
 	}
 	if err := run("make build", "make", "build"); err != nil {
