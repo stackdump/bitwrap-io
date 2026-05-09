@@ -224,31 +224,17 @@ export function isDevWalletEnabled() {
 export function enableDevWallet() {
   if (!isDevWalletEnabled()) return;
 
-  // Address will be set by first /api/dev/sign call; use placeholder initially
-  let address = '0x0000000000000000000000000000000000000000';
+  const privKey = getOrCreateKey();
+  const address = getAddress(privKey);
 
-  // Try to get address eagerly
-  fetch('/api/dev/sign', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message: 'init' })
-  }).then(r => r.json()).then(data => {
-    address = data.address;
-    if (window.ethereum) window.ethereum.selectedAddress = address;
-    console.log(`[dev-wallet] address: ${address}`);
-    if (banner) banner.textContent = `Dev Wallet: ${address}`;
-  }).catch(() => {});
-
-  let banner = null;
   console.log('[dev-wallet] enabled');
+  console.log(`[dev-wallet] address: ${address}`);
 
-  // Show banner
-  banner = document.createElement('div');
+  const banner = document.createElement('div');
   banner.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#1a1a2e;color:#0f0;padding:6px 12px;font:12px monospace;z-index:9999;text-align:center;border-top:1px solid #333';
-  banner.textContent = 'Dev Wallet: connecting...';
+  banner.textContent = `Dev Wallet: ${address}`;
   document.body.appendChild(banner);
 
-  // Shim window.ethereum
   window.ethereum = {
     isMetaMask: false,
     isDevWallet: true,
@@ -261,22 +247,20 @@ export function enableDevWallet() {
           return [address];
 
         case 'personal_sign': {
+          // params: [message, address]. MetaMask convention: hex 0x... is decoded
+          // to bytes before signing; anything else is treated as UTF-8.
           const [message] = params;
-          // Sign via server-side dev endpoint (avoids JS ECDSA complexity)
-          const resp = await fetch('/api/dev/sign', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message })
-          });
-          if (!resp.ok) {
-            const text = await resp.text();
-            throw new Error(`dev-wallet sign failed: ${text}`);
+          let msgInput;
+          if (typeof message === 'string' && /^0x[0-9a-fA-F]*$/.test(message)) {
+            const hex = message.slice(2);
+            msgInput = new Uint8Array((hex.match(/.{2}/g) || []).map(b => parseInt(b, 16)));
+          } else {
+            msgInput = message;
           }
-          const data = await resp.json();
-          // Use the server-derived address (authoritative)
-          address = data.address;
-          console.log(`[dev-wallet] signed: ${message.slice(0, 50)}...`);
-          return data.signature;
+          const sig = signMessage(msgInput, privKey);
+          const preview = typeof message === 'string' ? message.slice(0, 50) : '(bytes)';
+          console.log(`[dev-wallet] signed: ${preview}...`);
+          return sig;
         }
 
         default:
