@@ -163,6 +163,13 @@ Replacement/re-share guardrails:
 - Replacement proposals include a monotonic `rekeyEpoch`; lower/equal epochs are rejected.
 - Enforce a cooldown window (`T_rekey_cooldown`) and a bounded retry count (`MAX_REKEY_ATTEMPTS`) to prevent rapid retry grinding.
 
+Minimal resharing flow (same-secret refresh):
+1. Select live legacy signer set `L` with `|L| >= t`.
+2. Each `i in L` samples random refresh polynomial `f_i(x)` with `f_i(0)=0` and degree `t-1`, broadcasts commitments.
+3. For each target coordinator index `k`, each `i` sends encrypted refresh share `f_i(k)`.
+4. New share holder `k` sets `s'_k = s_k + Σ_i f_i(k)` (or bootstrap from zero for newly added members), preserving the original secret at `x=0`.
+5. Publish resharing transcript root; old shares are retired for the active `rekeyEpoch`.
+
 ## Data structure deltas
 
 ### Poll metadata (`schemaVersion: 4`)
@@ -217,7 +224,7 @@ Replacement/re-share guardrails:
 
 - **Pedersen DKG** removes dealer key-retention risk.
 - **Creator-picked coordinators** is the minimum UX change and aligns with current creation flow.
-- **`t = ceil(2n/3)`** is a confidentiality-first default: at least a two-thirds coalition is needed to decrypt, while close-time liveness still tolerates up to one-third coordinator unavailability.
+- **`t = ceil(2n/3)`** is a confidentiality-first default. Example: with `n=5`, this yields `t=4` (a 4-of-5 threshold). More generally it requires a supermajority coalition to decrypt while still tolerating up to `n-t` unavailable coordinators at close.
 - **`schemaVersion: 4`** gives explicit parser/version separation for safe backward handling.
 
 ## References

@@ -20,7 +20,7 @@ Key properties:
 
 ## Work breakdown
 
-Estimated one-engineer effort: **3–6 weeks** end-to-end, assuming existing DKG primitives/libraries are reused and only integration + protocol wiring are implemented. If Pedersen DKG must be implemented from scratch, timeline increases materially. This estimate excludes third-party security audit and cryptanalysis time.
+Estimated one-engineer effort: **3–6 weeks** end-to-end, assuming existing Pedersen-DKG primitives are reused (target: leverage `github.com/pflow-xyz/go-pflow` infrastructure where feasible) and only integration + protocol wiring are implemented. If Pedersen DKG must be implemented from scratch, timeline increases materially. This estimate excludes third-party security audit and cryptanalysis time.
 
 ### C1. Protocol specification + schema lock — DONE
 
