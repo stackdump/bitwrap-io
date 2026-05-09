@@ -8,7 +8,7 @@ Remove the v3.0 single-key trust point: compromise of one creator key must no lo
 
 ## Decisions (resolved)
 
-1. **Key generation ceremony:** **Pedersen DKG (t-of-n)**, not trusted-dealer Shamir.
+1. **Key generation ceremony:** **Pedersen DKG (t-of-n)** instead of trusted-dealer Shamir secret sharing.
 2. **Coordinator selection model:** **creator-picked coordinator set** at poll creation for v3.1.
 3. **Threshold defaults:** parameterized, default **n=5, t=4** (`t = ceil(2n/3)`).
 4. **Circuits:** add **`PartialDecryptCircuit_K`** and **`CombinedDecryptCircuit_K_t`**.
@@ -155,7 +155,7 @@ v3.1 does **not** permit a single-party master-key fallback.
 Recovery policy:
 1. **Primary window:** request partials for `T_close` duration.
 2. **Retry window:** rebroadcast + endpoint failover for `T_retry`.
-3. **Coordinator replacement / re-share:** if rotation is needed and at least `t` legacy coordinators are still available, creator proposes replacement set and a new committee key via a signed update artifact; update must be co-signed by at least `t` legacy coordinators.
+3. **Coordinator replacement / re-share:** applies only if at least `t` legacy coordinators are still available. Creator proposes a replacement set and a new committee key in a signed update artifact. The update must be co-signed by at least `t` legacy coordinators.
 4. If fewer than `t` legacy coordinators are reachable, threshold cannot be safely re-shared; poll remains `close_pending`/`stalled` (explicit state), not force-decrypted.
 
 ## Data structure deltas
