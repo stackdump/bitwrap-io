@@ -2,7 +2,9 @@
 
 Tracking document for the remaining work to deliver `VoteSchemaVersion = 3`: end-to-end private voting where no individual choice is ever published, and the tally is a ZK-verified decryption of an aggregate ciphertext.
 
-**Status:** B1–B4 done; B5 not started. Phase A (issues 1–4) shipped separately — see git history for `cmd/prover-wasm`, `internal/server/tally_proof.go`, `prover/tally_gen*.go`, `public/poll.js`.
+**Status:** B1–B5 done. v3 protocol is functionally complete, all server-side circuits prove + verify, and the disk-leakage acceptance test passes. **One known limitation:** browser-side WASM proving is blocked on an upstream gnark serialization bug (see `docs/wasm-prove-bug.md`); v3 polls are usable via API but not via the browser UI today.
+
+Phase A (issues 1–4) shipped separately — see git history for `cmd/prover-wasm`, `internal/server/tally_proof.go`, `prover/tally_gen*.go`, `public/poll.js`.
 
 ## Why
 
@@ -81,30 +83,84 @@ Estimated one-engineer effort: **2–4 weeks** end-to-end. Items are ordered by 
 
 **Optimization opportunity (deferred):** `gnark`'s `ScalarMul` runs full Fr-width (~250 bits) regardless of the scalar's actual size. Inlining a 16-bit binary-recomposition mult for `G · Tallies[j]` would save ~2–3k constraints per bin. `DoubleBaseScalarMul` was tried and is *slower* on this curve since it also assumes full-width scalars.
 
-### B5. v3 schema + server + client + UI — NOT STARTED
+### B5. v3 schema + server + client + UI — DONE (with one limitation)
 
-**Goal:** stitch it all together behind a new schema version.
+Landed across 11 sub-slices in commits `e04a8db` … `19a6453`:
 
-Server:
-- Extend `Poll` with `PkCreator string` (hex point).
-- `handleCastVote` v3 branch stores K ciphertexts instead of a single `voteCommitment`; never accepts a `VoterSecret`.
-- New `POST /api/polls/{id}/aggregate` — creator-signed; server computes aggregate `(A_j, B_j)`, accepts creator's decrypt proof + tallies, persists as the tally artifact.
-- Remove reveal endpoints for v3 polls. `store.RevealBundle` never written.
+| | | |
+|---|---|---|
+| B5.1 | v3 storage + tally artifact | `e04a8db` |
+| B5.2 | poll-creation v3 branch (server) | `e64ce12` |
+| B5.3 | vote-submission v3 branch (server) | `7c553ef` |
+| B5.4 | `POST /api/polls/{id}/aggregate` + GET tally | `e793187` |
+| B5.5 | reveal/results gating for v3 | `b56ab1d` |
+| B5.6 | JS witness builders + Go↔JS parity | `67867fc` |
+| B5.7a | v3 circuits in WASM `circuitByName` | `a4e55b9` |
+| B5.7b | `castVoteV3` in `poll.js` | `27546f5` |
+| B5.7d | `GET /api/polls/{id}/votes` audit endpoint | `3e133b2` |
+| B5.8a | sk-creator localStorage + backup module | `f7b7f10` |
+| B5.8b | `createPoll` v3 branch | `9599771` |
+| B5.8c | `closePollV3` (client-side aggregate + decrypt) | `07f17c5` |
+| B5.9 | UI surface (toggle, banners, results) | `25e53dd` |
+| B5.10a/b | Playwright spec + project | `a18f9c5` |
+| B5.10c | "no choice on disk" acceptance test | `bd58b48` |
+| B5.10d | CI wiring | (auto, no commit) |
+| B5.11 | client-side proving-key serving | `b3c3410` |
 
-Client (`public/`):
-- `pedersen.js` from B2.
-- `poll.js` v3 branch: generate K ciphertexts, build circuit witness, WASM prove.
-- Creator flow: generate `skCreator` at poll creation (client-side), sign + upload `pkCreator`; at close, download aggregate, decrypt locally, sign + upload tally + decrypt proof.
-- UI removes the reveal step entirely for v3; "Close poll & publish tallies" is the creator's final action.
+**The one limitation:** B5.11 wired all the infrastructure for
+browser-side proving (proving-key endpoint, witness factory, embed
+fix, content-types, `loadKeys` calls in `poll.js`) but the WASM
+prover fails at constraint #2459 when given keys serialized by
+native Go and reloaded into a wasm32 binary. Localized in
+commit `19a6453` and written up at `docs/wasm-prove-bug.md`.
 
-Tests:
-- End-to-end Playwright: create v3 poll → register → vote (N voters) → creator closes → verify no file under `data/polls/{id}/` contains any voter's choice.
-- Integration test: `/api/polls/{id}/reveal` returns 404 for v3 polls.
-- Parity test: aggregate of N JS-generated ciphertexts decrypts identically in Go.
+Concrete impact today:
 
-## Critical open questions
+- v3 protocol works end-to-end via direct API + Go-side proving
+  (verified by `TestCastVoteV3HappyPath`,
+  `TestAggregateV3HappyPath`, `TestV3PollDirHasNoChoiceLeakage`).
+- v3 polls created from the UI render correctly, the v2/v3
+  banner switches, sk_creator backs up — all the create-side
+  pieces work.
+- Voting and closing a v3 poll from a browser is blocked on the
+  WASM prove path. Anyone with server-side context can drive the
+  full lifecycle; voters with only a browser cannot.
 
-Answer these before B2 begins — the answers affect primitives and server surface.
+The v2 (coercion-resistant + reveal-based) flow is unaffected
+and remains the default in the create-poll UI.
+
+## Remaining work
+
+The privacy contract is fully delivered. The work that's left is
+all about closing out the browser-side UX gap:
+
+1. **Resolve the WASM proving bug.** See `docs/wasm-prove-bug.md`
+   for the full localization. Four remediation paths are listed
+   there with trade-offs; the cleanest is filing an upstream gnark
+   issue with the reproduction artifacts already committed in
+   `prover/cs_roundtrip_test.go`, `public/v3_wasm_prove_diag.mjs`,
+   and `public/v3_wasm_compile_prove_diag.mjs`. A 1-line fix in
+   gnark's CBOR encoding (force int64 width) is the likely
+   resolution. Until then, v3 polls are server-operator-only.
+
+2. **Re-enable the full Playwright lifecycle.** The skipped test
+   in `e2e/v3.spec.js` (`create → register → vote → close`)
+   becomes the natural acceptance gate for the WASM fix. The
+   harness (sk_creator generation, wallet-fixture signing,
+   download capture) is already in place — only the WASM prove
+   step blocks it.
+
+3. **Threshold decryption (v3.1).** Single-creator-key risk is the
+   biggest open privacy gap in v3.0: a compromised creator key
+   retroactively decrypts every ballot. The protocol surface
+   (`/aggregate`, `tallyDecrypt_8`) was designed so threshold can
+   drop in later without protocol changes — see open question 3
+   below. Out of scope for v3.0; tracked as Phase C.
+
+## Original open questions, now resolved
+
+The questions captured at the start of B5 — locked in during
+planning and reflected in the current implementation.
 
 1. **`hash_to_curve` standard for `H`.** Default recommendation: RFC9380 SSWU with domain `bitwrap-h-generator-v1`, using `gnark-crypto` on the Go side and a canonical implementation on the JS side. Alternative: try-and-increment (simpler, slightly less standard).
 
@@ -205,10 +261,25 @@ and skips the full vote/close lifecycle pending this fix.
 
 ## How to resume this work
 
-If you're picking this up cold:
+Phase B is delivered. If you're picking up where it left off:
 
-1. Read `docs/homomorphic-tally-spec.md` — full protocol.
-2. Answer open questions 1 and 2 above (pick `hash_to_curve` + `sk_creator` custody).
-3. Start at B2. Everything downstream depends on the primitives being parity-verified.
+1. **Browser-prover bug.** Read `docs/wasm-prove-bug.md`. Run the
+   five labeled diagnostics to confirm the bug still reproduces
+   on your machine + gnark version. Pick a remediation path
+   (likely #4: file the upstream issue with the reproduction
+   artifacts).
+2. **After the bug is fixed**, un-skip the lifecycle test in
+   `e2e/v3.spec.js` (look for the `test.skip` block) — that test
+   exercises the full create → vote → close UI flow.
+3. **Phase C / v3.1 (threshold decryption)** is the next protocol
+   evolution. The hooks are in place — `/aggregate` doesn't care
+   how many parties produced the decrypt proof, and the circuit
+   doesn't care either. The work is the t-of-n key-sharing
+   ceremony + a multi-party `sk_creator` substitute.
 
-The Phase A code in `prover/tally_*.go`, `prover/lazy_compile.go`, and `internal/server/tally_proof.go` is the reference for how a new circuit family gets wired in — sized variants, lazy compile, size dispatch, WASM `circuitByName`, and the `loadVerifyOnly` browser path. Same pattern applies to the B3 and B4 circuits.
+For new circuit families more broadly: `prover/vote_homomorphic_gen.go`
++ `prover/tally_decrypt_gen.go` are the reference for how a v3-shaped
+circuit gets wired in (BabyJubJub points as public inputs, in-circuit
+ScalarMul, MiMC nullifier, Merkle membership).
+`internal/server/keys_endpoint_test.go` shows how to plumb keystore
+serving for in-browser proving once the WASM bug is resolved.
