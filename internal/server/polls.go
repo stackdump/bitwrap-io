@@ -44,7 +44,7 @@ type createPollRequest struct {
 // castVoteRequest is the request body for POST /api/polls/{id}/vote.
 type castVoteRequest struct {
 	Nullifier      string            `json:"nullifier"`
-	VoteCommitment string            `json:"voteCommitment"`             // mimcHash(voterSecret, voteChoice) — blinded
+	VoteCommitment string            `json:"voteCommitment,omitempty"`   // v1/v2 only; absent on v3
 	Proof          string            `json:"proof"`
 	Witness        map[string]string `json:"witness,omitempty"`          // full witness for server-side verification
 	PublicInputs   []string          `json:"publicInputs,omitempty"`     // proof public inputs for validation
@@ -52,6 +52,13 @@ type castVoteRequest struct {
 	// Client-side proof bytes (privacy-preserving path — server never sees private inputs)
 	ProofBytes         string `json:"proofBytes,omitempty"`         // base64 gnark proof
 	PublicWitnessBytes string `json:"publicWitnessBytes,omitempty"` // base64 gnark public witness
+
+	// v3 (homomorphic) ballots carry K ElGamal ciphertexts under the
+	// poll's PkCreator. Server reconstructs the public witness from
+	// these + poll fields rather than trusting the client's
+	// PublicWitnessBytes — keeps the verifier's truth boundary at the
+	// authoritative state, not the request body.
+	Ciphertexts []store.HomomorphicCiphertext `json:"ciphertexts,omitempty"`
 }
 
 // revealVoteRequest is the request body for POST /api/polls/{id}/reveal.
@@ -337,6 +344,21 @@ func (s *Server) handleCastVote(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "nullifier required", http.StatusBadRequest)
 		return
 	}
+
+	// v3 / homomorphic-tally branch. Distinct shape from v1/v2: no
+	// voteCommitment (the choice is hidden inside ciphertexts that
+	// are never decrypted individually). voterSecret-bearing fields
+	// like Witness["voterSecret"] are likewise rejected — server must
+	// never see anything that could deanonymize a ballot.
+	if poll.VoteSchemaVersion == 3 {
+		if err := s.handleCastVoteV3(w, r, poll, &req); err != nil {
+			// handleCastVoteV3 writes its own response on error.
+			_ = err
+			return
+		}
+		return
+	}
+
 	if req.VoteCommitment == "" {
 		http.Error(w, "voteCommitment required (blinded vote hash)", http.StatusBadRequest)
 		return

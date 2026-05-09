@@ -83,10 +83,16 @@ type RegistryRootSig struct {
 // Tallying is done via aggregate counters that can't be linked back to individual voters.
 type VoteRecord struct {
 	Nullifier      string    `json:"nullifier"`
-	VoteCommitment string    `json:"voteCommitment"` // mimcHash(voterSecret, voteChoice) — blinded, can't reverse
+	VoteCommitment string    `json:"voteCommitment,omitempty"` // mimcHash(voterSecret, voteChoice) — blinded, can't reverse. Empty for v3.
 	Proof          string    `json:"proof"`
 	Timestamp      time.Time `json:"timestamp"`
 	Revealed       bool      `json:"revealed,omitempty"` // true after voter revealed (choice NOT stored here)
+
+	// Ciphertexts is set for v3 (homomorphic) votes only — K ElGamal
+	// ciphertexts under the poll's PkCreator. Empty for v1/v2 votes.
+	// The aggregate close handler folds these per-bin to derive the
+	// tally artifact without ever decrypting an individual ballot.
+	Ciphertexts []HomomorphicCiphertext `json:"ciphertexts,omitempty"`
 }
 
 // PollResults holds tallied results for a poll.
