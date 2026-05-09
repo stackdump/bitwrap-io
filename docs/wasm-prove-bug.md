@@ -1,159 +1,90 @@
-# gnark wasm32 prove bug after cs deserialize
+# gnark-crypto twistededwards.PointExtended.Add missing curve-params init
 
-**Status:** worked-around in browser. Root cause not yet fixed upstream.
+**Status:** fixed in our gnark-crypto fork (`fix-pointextended-add-init`),
+pinned via `replace` in [`go.mod`](../go.mod). Regression check is
+`make test-wasm-prove`.
 **Surfaced:** Phase B / B5.11 (commit `19a6453`).
-**Workaround landed:** 2026-05-09 — `loadKeysFreshCS` in the wasm prover.
-**Impact:** v3 (homomorphic-tally) polls **now** complete the vote / close
-flow in a browser via the workaround. Privacy contract was unaffected
-even before the workaround (server-side lifecycle works end-to-end and
-`internal/server/v3_disk_test.go` enforces disk-leakage absence).
+**Fork landed:** 2026-05-09.
 
-## TL;DR
+## Root cause
 
-A gnark `r1cs.R1CS` constraint system **deserialized** via `cs.ReadFrom`
-on wasm32 produces an in-memory cs that the wasm32 prover handles
-*incorrectly* for circuits using `scalarMulFakeGLV` (BabyJubJub).
-Compiling the same circuit *in process* yields a cs whose bytes are
-**byte-identical** to the deserialized one yet which proves correctly.
-Native Go (amd64 / arm64) is unaffected — its prover handles the
-deserialized cs the same as the freshly-compiled one.
+`gnark-crypto/ecc/<curve>/twistededwards/point.go::PointExtended.Add`
+reads `curveParams.D` to compute the curve-equation cross-term, but —
+unlike its `PointAffine.Add`, `PointAffine.IsOnCurve`, `PointProj.Add`,
+`PointProj.MixedAdd` siblings — does **not** call
+`initOnce.Do(initCurveParams)` first.
 
-So this is **not** a cross-architecture serialization bug (the bytes
-are platform-independent) — it's a wasm32-specific bug somewhere in the
-gnark prove path that depends on non-serialized in-memory state which
-is set during `frontend.Compile` but lost on `cs.ReadFrom`.
+`curveParams` is a package-level `CurveParams`, lazily initialised by
+`initCurveParams` via a `sync.Once`. Anything that has previously
+called `GetEdwardsCurve()`, `IsOnCurve`, `PointAffine.Add`, `PointProj.Add`,
+or `PointProj.MixedAdd` triggers the init. The first caller of
+`PointExtended.Add` in a process that has done none of those reads
+`curveParams.D == 0`, computes a wrong point, and propagates the wrong
+value back through the hint output binding.
 
-The bug surfaces in the `scalarMulFakeGLV` hint output binding — the
-in-circuit computation diverges from the hint's claimed value, even
-though the same arithmetic on the same scalar in the same hint function
-on a freshly-compiled cs gives the right answer.
+The bug is in every twisted-Edwards curve generated from
+`internal/generator/edwards/template/point.go.tmpl`: bn254, bls12-377,
+bls12-381 (and bandersnatch), bls24-315, bls24-317, bw6-633, bw6-761.
 
-## Workaround in production
+## Why it bit us
 
-The browser prover now exposes `loadKeysFreshCS(name, pkBytes, vkBytes)`
-which **recompiles** the circuit cs in-wasm and pairs it with the
-server-supplied pk/vk. v3 circuits (`voteCastHomomorphic_8`,
-`tallyDecrypt_8`) use this path; everything else still goes through
-the cheaper `loadKeys`. Cost is one circuit compile per session
-(~50 s for `voteCastHomomorphic_8` on a modern laptop), then ~10 s
-per vote / close. See:
+The bitwrap browser flow loads cs/pk/vk via `/api/keys` and never
+compiles the circuit on the client. The first thing that touches
+twistededwards is the BN254 `scalarMulHint` invoked during
+`r1cs.Solve` — which goes:
 
-- `cmd/prover-wasm/main.go::loadKeysFreshCS`
-- `public/prover.js::loadKeysFreshCS`
-- `public/poll.js::ensureV3Circuit` (FRESH_CS_CIRCUITS set)
-- `public/wasm_freshcs_diag.mjs` (Node-WASM repro of the workaround)
-
-## Reproduction
-
-Prerequisites:
-
-- `bitwrap` built with v3 circuits registered in the keystore
-  (default since B5.11). Run with `-key-dir <dir>` so cs/pk/vk are
-  persisted.
-- Node ≥ 18 to run the WASM diag scripts.
-
-```sh
-make wasm && make build
-./bitwrap -dev -key-dir /tmp/bitwrap-keys-debug
+```
+scalarMulHint
+  → babyjubjub.PointAffine.ScalarMultiplication
+  → PointExtended.scalarMulWindowed
+  → PointExtended.Add  (reads curveParams.D, never initialised)
 ```
 
-In another shell, harvest a real browser witness to disk:
+`curveParams.D == 0` makes the cross-term zero, the in-circuit
+`scalarMulFakeGLV` cross-check fires:
 
-```sh
-cd e2e
-BASE_URL=http://localhost:8088 npx playwright test --project=v3 -g "dump"
-# writes /tmp/v3-witness-dump.json
+```
+constraint #2459 is not satisfied:
+  1 ⋅ 2206135835295902794146583415730252686447718839502312722837270752407077685424
+   != 16794912830547356530447244331793267724748168553544916545917482353364877864433
 ```
 
-Then run two parallel diagnostics:
+On the server side the bug is invisible: `frontend.Compile` runs
+`std/algebra/native/twistededwards.NewEdCurve` which calls
+gnark-crypto's `GetEdwardsCurve`, triggering `initOnce.Do` long before
+any prove starts. The wasm32-vs-native framing in earlier versions of
+this doc was a red herring; the bug applies to amd64 just as much, but
+no production amd64 client of bitwrap loads keys without compiling.
 
-```sh
-# A. WASM, loadKeys path (FAILS at constraint #2459)
-node public/v3_wasm_prove_diag.mjs /tmp/bitwrap-keys-debug
-
-# B. WASM, compileCircuit path (SUCCEEDS, ~2.5min compile + prove)
-node public/v3_wasm_compile_prove_diag.mjs
-
-# C. Native Go with the same witness (SUCCEEDS)
-go test ./prover/ -run TestProveFromDumpedWitness -v
-
-# D. Native Go, full serialize → deserialize → prove round-trip (SUCCEEDS)
-go test ./prover/ -run TestCSRoundTripNativeProve -v
-
-# E. Native + -tags=purego (same fr backend wasm uses, SUCCEEDS)
-go test -tags=purego ./prover/ -run TestProveFromDumpedWitness -v
-```
-
-The combination "(A) fails while (B) (C) (D) (E) all succeed" pins
-the bug to native-Go-produced cs+pk bytes being misinterpreted by
-the wasm32 deserializer.
-
-## What's been ruled out
+## Hypotheses ruled out (kept as a record of the chase)
 
 | Hypothesis | Evidence |
 |---|---|
-| JS witness shape is wrong | (C) passes with the exact JS-built witness |
-| Witness factory bug | Same `buildVoteCastHomomorphic8Assignment` runs in (A) and (C); (C) passes |
-| Byte format unstable | (D) round-trips natively, identical bytes in/out |
-| Cross-arch CBOR int width | Native and wasm32 produce **byte-identical** cs bytes for both `mint` and `voteCastHomomorphic_8` (verified via `public/v3_wasm_export_diag.mjs` + `prover/wasm_export_diag_test.go`) |
-| Wasm-side deserializer is lossy | Round-trip in wasm (`load → write`) yields byte-identical bytes (`public/wasm_roundtrip_diag.mjs`) |
-| pure-Go vs asm fr arithmetic | (E) passes with `-tags=purego`, which selects the same `element_purego.go` backend wasm uses |
-| Hint IDs differ across builds | `TestHintIDsNative` + WASM hint dump produce identical FNV-32a hashes (halfGCD=726531982, scalarMulHint=1399717548, decomposeScalar=1582912298) |
-| Hint registration missing in WASM | gnark's `init()` runs in wasm32 the same as native; verified via instrumentation |
-| Constraint count differs | Both native and WASM report 72253 constraints / 39 public / 58 secret variables for the same circuit |
-| Bug is generic to all wasm32 prove | (A) succeeds for `mint` (no scalarMulFakeGLV) on wasm32 with native bytes; only v3 circuits fail (`public/wasm_load_native_diag.mjs mint` vs `voteCastHomomorphic_8`) |
-| Bug is specific to native→wasm cross-arch | wasm-Setup keys also fail on wasm prove (`public/wasm_load_wasm_diag.mjs voteCastHomomorphic_8`) — the bug is wasm-prove vs deserialized-cs, not native-vs-wasm |
+| Cross-arch CBOR int width | Native and wasm32 produce **byte-identical** cs bytes for both `mint` and `voteCastHomomorphic_8` (`public/v3_wasm_export_diag.mjs` + `prover/wasm_export_diag_test.go`) |
+| Wasm-side deserializer is lossy | Round-trip in wasm yields byte-identical bytes (`public/wasm_roundtrip_diag.mjs`) |
+| Bug is generic to wasm32 prove | (A) succeeds for `mint` (no scalarMulFakeGLV); only v3 circuits fail (`public/wasm_load_native_diag.mjs mint` vs `voteCastHomomorphic_8`) |
+| Bug is in cs serialization | `reflect.DeepEqual` between fresh-compile and load-from-bytes cs reports diffs only in compile-only fields (`mCoeffs`, `lbWireLevel`); rebuilding those by hand inside wasm did not fix prove |
+| Bug is in pk or vk | `compareAnyObjects(freshPk, loadedPk)` and `compareAnyObjects(freshVk, loadedVk)` report zero diffs over every G1Affine / G2Affine / Domain field |
+| Bug is in unexported state of cs | Loaded-cs + fresh-Setup pk also fails; copying the four `cbor:"-"` fields fixes it; isolating each field shows even an empty copy fixes it; merely calling `frontend.Compile` *before* prove fixes it; the trigger is anything that touches the package-level `curveParams` first |
 
-## Where the bug lives (current understanding)
+## Fix
 
-The original hypothesis was a CBOR int-width issue in
-`gnark@v0.14.0/constraint/marshal.go`. That hypothesis is now **ruled
-out**: `cs.WriteTo` produces byte-identical bytes on amd64 and wasm32
-for both small (`mint`) and large (`voteCastHomomorphic_8`) circuits,
-and a wasm-side `load → write` round-trip is also byte-identical. The
-deserializer faithfully reconstructs everything that's in the bytes.
+`gnark-crypto/ecc/<curve>/twistededwards/point.go`, top of
+`PointExtended.Add`:
 
-The remaining suspect is **non-serialized in-memory state of the cs
-that's set during `frontend.Compile` but not by `cs.ReadFrom`**, and
-which the wasm32 prover depends on while the native prover does not.
-Candidates (`cbor:"-"` in `gnark@v0.14.0/constraint/core.go`):
+```go
+func (p *PointExtended) Add(p1, p2 *PointExtended) *PointExtended {
+	initOnce.Do(initCurveParams)
 
-- `lbWireLevel []Level` — only used by the level-builder during
-  compile per source comments; should be irrelevant to prove.
-- `q *big.Int`, `bitLen int` — both reconstructed in
-  `CheckSerializationHeader`.
-- `genericHint BlueprintID` — unexported, defaults to 0 from
-  `NewSystem`'s implicit `AddBlueprint(&BlueprintGenericHint{})`.
+	var A, B, C, D, E, F, G, H, tmp fr.Element
+	...
+}
+```
 
-A byte-level diff says nothing because the bytes match. The next
-diagnostic step would be to dump every reachable field of the
-in-memory cs after compile vs after load and find which one differs
-on wasm32.
-
-## Why the workaround works
-
-`loadKeysFreshCS(name, pk, vk)` calls `frontend.Compile(...)` from
-inside wasm and uses that cs object to prove. Whatever non-serialized
-state the wasm prover needs is set up by `Compile` and remains in
-memory throughout the prove call. The pk/vk supplied by the server
-match because they were produced by `groth16.Setup` against the same
-deterministic circuit definition.
-
-## Remediation options (longer term)
-
-In rough order of effort:
-
-1. **Keep the workaround** (current state). Voters pay a one-time
-   ~50 s circuit compile per session. UX could be improved by
-   pre-compiling in a Web Worker on page load.
-
-2. **Diff in-memory cs state** (next localization step). Walk every
-   reachable field on a freshly-compiled cs and a deserialized cs
-   inside wasm and report deltas. Whatever's missing is the bug.
-
-3. **File a gnark issue / fork upstream.** Once localized, the fix
-   is likely a few lines in `cs.ReadFrom` or in the prover's wasm32
-   path.
+Same line in the corresponding template
+`internal/generator/edwards/template/point.go.tmpl`. Patched in
+[stackdump/gnark-crypto@fix-pointextended-add-init](https://github.com/stackdump/gnark-crypto/tree/fix-pointextended-add-init);
+pinned in `go.mod` via the `replace` directive.
 
 ## Reproduction artifacts in this repo
 
@@ -163,31 +94,24 @@ In rough order of effort:
 | `prover/witness_v3_dumpfile_test.go` | Native Go: replay dumped witness against a freshly compiled circuit (passes) |
 | `prover/cs_roundtrip_test.go` | Native Go: full serialize → deserialize → prove (passes) |
 | `prover/hint_ids_test.go` | Print hint IDs for cross-platform comparison |
-| `prover/wasm_export_diag_test.go` | Native Go: dump cs/pk/vk for any registered circuit (paired with the wasm diags) |
-| `prover/wasm_keys_native_load_test.go` | Native Go: prove + verify against wasm-Setup keys (passes for `mint`; demonstrates wasm-encoded keys round-trip cleanly into native) |
-| `public/v3_wasm_prove_diag.mjs` | Node-WASM: replay `loadKeys` + `prove` against a keystore (fails for v3) |
-| `public/v3_wasm_compile_prove_diag.mjs` | Node-WASM: bypass `loadKeys` with fresh `compileCircuit` (succeeds) |
+| `prover/wasm_export_diag_test.go` | Native Go: dump cs/pk/vk for any registered circuit |
+| `prover/wasm_keys_native_load_test.go` | Native Go: prove + verify against wasm-Setup keys |
+| `prover/wasm32_loadkeys_only_test.go` | Native Go: load-keys-then-prove without prior compile/Setup — pre-fix this would fail; passes now |
+| `public/v3_wasm_prove_diag.mjs` | Node-WASM: replay `loadKeys` + `prove` against a server keystore |
+| `public/v3_wasm_compile_prove_diag.mjs` | Node-WASM: bypass `loadKeys` with fresh `compileCircuit` |
 | `public/v3_wasm_export_diag.mjs` | Node-WASM: compile a circuit and dump cs/pk/vk bytes |
-| `public/wasm_load_native_diag.mjs` | Node-WASM: load native cs/pk/vk bytes and prove (fails for v3, passes for `mint`) |
-| `public/wasm_load_wasm_diag.mjs` | Node-WASM: load wasm-Setup cs/pk/vk bytes and prove (fails for v3 — shows it's not cross-arch) |
-| `public/wasm_roundtrip_diag.mjs` | Node-WASM: load native bytes, re-export, byte-diff (identical — deserializer is faithful) |
-| `public/wasm_freshcs_diag.mjs` | Node-WASM: the workaround — load native pk/vk, recompile cs in wasm, prove (passes) |
-
-These run independently of Playwright/CI and produce comparable
-output, so a future debugging session (or an upstream issue
-reporter) can re-exercise each leg of the diagnosis without
-rebuilding the whole stack.
+| `public/wasm_load_native_diag.mjs` | Node-WASM: load native cs/pk/vk bytes and prove (the canonical regression test) |
+| `public/wasm_load_wasm_diag.mjs` | Node-WASM: load wasm-Setup cs/pk/vk bytes and prove |
+| `public/wasm_roundtrip_diag.mjs` | Node-WASM: load native bytes, re-export, byte-diff |
 
 ## Pointers
 
-- gnark serialization layer: `gnark@v0.14.0/constraint/marshal.go`,
-  `internal/backend/ioutils/intcomp.go`
-- gnark hint registry: `gnark@v0.14.0/constraint/solver/hint.go`
-- BabyJubJub in-circuit scalar mul: `gnark@v0.14.0/std/algebra/native/twistededwards/point.go` (`scalarMulFakeGLV`)
-- Off-circuit scalar mul (used by `scalarMulHint`):
-  `gnark-crypto@v0.19.2/ecc/bn254/twistededwards/point.go`
-  (`scalarMulWindowed` on `PointExtended`)
+- Patched function: `gnark-crypto@fix-pointextended-add-init` /
+  `ecc/bn254/twistededwards/point.go`, function `PointExtended.Add`
+- Generator template:
+  `gnark-crypto/internal/generator/edwards/template/point.go.tmpl`,
+  function `(*PointExtended).Add`
+- Off-circuit hint: `gnark@v0.14.0/std/algebra/native/twistededwards/hints.go::scalarMulHint`
+- In-circuit caller: `gnark@v0.14.0/std/algebra/native/twistededwards/point.go::scalarMulFakeGLV`
 - bitwrap-side endpoints: `internal/server/server.go` (`handleKeys`),
   `internal/server/keys_endpoint_test.go`
-- bitwrap-side witness adaptor: `prover/witness_v3_assignment.go`,
-  `prover/service.go::CreateAssignment`

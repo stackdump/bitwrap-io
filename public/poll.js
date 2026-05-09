@@ -3,28 +3,17 @@
 import { mimcHash } from './mimc.js';
 import { MerkleTree } from './merkle.js';
 import { buildVoteCastWitness, buildVoteCastHomomorphicWitness, buildTallyDecryptWitness, HOMOMORPHIC_CHOICES } from './witness-builder.js';
-import { prove as workerProve, loadKeys, loadKeysFreshCS, initProver } from './prover.js';
+import { prove as workerProve, loadKeys, initProver } from './prover.js';
 
 // Cache of v3 circuits already loaded into the WASM worker for the
 // current session. loadKeys is idempotent server-side (re-loading the
 // same bytes overwrites the existing entry) but the multi-MB proving
 // key fetch is wasteful to repeat. Module-level — survives navigation
 // within the SPA.
-//
-// v3 circuits (voteCastHomomorphic_8, tallyDecrypt_8) hit issue #3 —
-// gnark wasm32 prove fails on a cs read back from disk for circuits
-// using scalarMulFakeGLV (BabyJubJub) — so they take the freshCS
-// workaround: fetch only pk/vk, recompile cs in the wasm prover.
-// First-load cost is a circuit compile (~50s) per session.
 const _v3CircuitsLoaded = new Set();
-const FRESH_CS_CIRCUITS = new Set(['voteCastHomomorphic_8', 'tallyDecrypt_8']);
 async function ensureV3Circuit(name) {
     if (_v3CircuitsLoaded.has(name)) return;
-    if (FRESH_CS_CIRCUITS.has(name)) {
-        await loadKeysFreshCS(name, '/api/keys');
-    } else {
-        await loadKeys(name, '/api/keys');
-    }
+    await loadKeys(name, '/api/keys');
     _v3CircuitsLoaded.add(name);
 }
 import {
