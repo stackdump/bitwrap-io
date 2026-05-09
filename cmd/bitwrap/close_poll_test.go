@@ -99,14 +99,17 @@ func TestRunClosePollMutuallyExclusiveFlags(t *testing.T) {
 }
 
 // TestRunClosePollPrintsPayloadWhenNoSig checks that without any signature
-// flag the CLI computes tallies and returns exit code 2 (needs-signature).
-// We use the BabyJubJub identity point as pk (sk=1) and identity ciphertexts
-// (which encode 0 under any key) to avoid real crypto.
+// flag the CLI computes tallies and returns exitNeedsSignature (2).
+// We use the BabyJubJub identity point (0, 1) as pkCreator with sk=1 and
+// identity ciphertexts (encryptions of 0 under any key) so the aggregation
+// and decryption succeed with all-zero tallies, and the exit-2 path is
+// triggered purely by the absence of --signature / --eth-key.
 func TestRunClosePollPrintsPayloadWhenNoSig(t *testing.T) {
-	// identity point Y=1, X=0 encodes 0 under any key — 32 LE bytes, first=0x01.
+	// Identity point (0, 1) in 32-byte little-endian encoding.
+	// On BabyJubJub: a*x^2 + y^2 = 1 + d*x^2*y^2 → at (0,1): 1 = 1 ✓
 	idBuf := make([]byte, 32)
 	idBuf[0] = 0x01
-	idHex := hex.EncodeToString(idBuf)
+	idHex := hex.EncodeToString(idBuf) // "01" + 62 zero hex chars
 
 	ciphertexts := make([]map[string]string, 8)
 	for i := range ciphertexts {
@@ -116,10 +119,10 @@ func TestRunClosePollPrintsPayloadWhenNoSig(t *testing.T) {
 	ts := httptest.NewServer(closePollMockHandler(
 		map[string]interface{}{
 			"id": "p3", "creator": "0xdeadbeef",
-			// pkCreator: 32 zero bytes as hex — identity point Y=0,X=0 which
-			// will fail DecodePoint, but that's fine: the test only checks
-			// that the CLI exits non-zero without a signature.
-			"pkCreator":         strings.Repeat("00", 32),
+			// pkCreator = identity point (0, 1) — valid on BabyJubJub.
+			// sk=1 below: G * 0 = identity in twisted Edwards, so decrypt
+			// of identity ciphertexts yields tally = 0 for every bin.
+			"pkCreator":         idHex,
 			"voteSchemaVersion": 3,
 			"status":            "active",
 		},
@@ -134,13 +137,10 @@ func TestRunClosePollPrintsPayloadWhenNoSig(t *testing.T) {
 	))
 	defer ts.Close()
 
-	// sk = 1 (matching the identity pk above won't satisfy the curve
-	// equation, so DecodePoint will fail — but that's fine; this test only
-	// validates the exit code path when no signature is provided).
+	// sk=1, pkCreator=identity: decrypt produces all-zero tallies.
+	// No signature flag → CLI must print payload and exit exitNeedsSignature.
 	code := closePollCore("p3", "01", "", "", ts.URL, "", http.DefaultClient)
-	// Either we reach the "needs signature" exit (2) or we exit with 1
-	// due to an invalid point.  Either way we must NOT return 0 (success).
-	if code == 0 {
-		t.Errorf("no sig path: want non-zero exit, got 0")
+	if code != exitNeedsSignature {
+		t.Errorf("no sig path: want exit %d (exitNeedsSignature), got %d", exitNeedsSignature, code)
 	}
 }

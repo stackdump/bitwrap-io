@@ -23,6 +23,13 @@ import (
 	"github.com/stackdump/bitwrap-io/prover"
 )
 
+// Exit codes for the close-poll subcommand.
+const (
+	exitOK            = 0 // success
+	exitErr           = 1 // fatal error
+	exitNeedsSignature = 2 // tallies computed; re-run with --signature or --eth-key
+)
+
 // closePollUsage prints usage for the close-poll subcommand.
 func closePollUsage(fs *flag.FlagSet) {
 	fmt.Fprintf(os.Stderr, `Usage: bitwrap close-poll <pollID> [flags]
@@ -33,7 +40,8 @@ posting the signed aggregate request to the server.
 
 When --signature is omitted the subcommand prints the canonical EIP-191
 message that must be signed by the poll creator's Ethereum wallet and exits
-with code 2.  Sign the printed message and re-run with --signature.
+with code 2 (exitNeedsSignature).  Sign the printed message and re-run with
+--signature or supply --eth-key to sign internally.
 
 Flags:
 `)
@@ -41,7 +49,11 @@ Flags:
 }
 
 // runClosePoll is the implementation of `bitwrap close-poll`.
-// Returns an OS exit code (0 success, 1 error, 2 needs-signature).
+// Returns an OS exit code:
+//
+//	0 (exitOK)             – poll closed successfully.
+//	1 (exitErr)            – fatal error (details printed to stderr).
+//	2 (exitNeedsSignature) – tallies computed and printed; re-run with --signature.
 func runClosePoll(args []string) int {
 	fs := flag.NewFlagSet("close-poll", flag.ContinueOnError)
 	fs.Usage = func() { closePollUsage(fs) }
@@ -72,7 +84,7 @@ func runClosePoll(args []string) int {
 	}
 
 	if err := fs.Parse(flagArgs); err != nil {
-		return 1
+		return exitErr
 	}
 
 	// Fall back to first remaining positional if pollID not yet found.
@@ -83,16 +95,16 @@ func runClosePoll(args []string) int {
 	if pollID == "" {
 		fmt.Fprintf(os.Stderr, "error: exactly one positional argument <pollID> required\n")
 		closePollUsage(fs)
-		return 1
+		return exitErr
 	}
 
 	if *skHex == "" {
 		fmt.Fprintf(os.Stderr, "error: --sk-hex is required\n")
-		return 1
+		return exitErr
 	}
 	if *sigHex != "" && *ethKeyHex != "" {
 		fmt.Fprintf(os.Stderr, "error: --signature and --eth-key are mutually exclusive\n")
-		return 1
+		return exitErr
 	}
 
 	return closePollCore(pollID, *skHex, *sigHex, *ethKeyHex, *serverURL, *keyDir, http.DefaultClient)
@@ -105,7 +117,7 @@ func closePollCore(pollID, skHex, sigHex, ethKeyHex, serverURL, keyDir string, c
 	skBytes, err := hex.DecodeString(strings.TrimPrefix(skHex, "0x"))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: invalid --sk-hex: %v\n", err)
-		return 1
+		return exitErr
 	}
 	sk := new(big.Int).SetBytes(skBytes)
 
@@ -113,38 +125,38 @@ func closePollCore(pollID, skHex, sigHex, ethKeyHex, serverURL, keyDir string, c
 	poll, err := fetchPoll(client, serverURL, pollID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error fetching poll: %v\n", err)
-		return 1
+		return exitErr
 	}
 	if poll.VoteSchemaVersion != 3 {
 		fmt.Fprintf(os.Stderr, "error: poll %q is v%d, close-poll only supports v3\n", pollID, poll.VoteSchemaVersion)
-		return 1
+		return exitErr
 	}
 	if poll.Status == "closed" {
 		fmt.Fprintf(os.Stderr, "error: poll %q is already closed\n", pollID)
-		return 1
+		return exitErr
 	}
 
 	// 3. Decode creator's public key from poll.
 	pkBytes, err := hex.DecodeString(poll.PkCreator)
 	if err != nil || len(pkBytes) != 32 {
 		fmt.Fprintf(os.Stderr, "error: poll pkCreator is malformed\n")
-		return 1
+		return exitErr
 	}
 	pk, err := prover.DecodePoint(pkBytes)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: decode pkCreator: %v\n", err)
-		return 1
+		return exitErr
 	}
 
 	// 4. Fetch votes.
 	voteCiphertexts, err := fetchVoteCiphertexts(client, serverURL, pollID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error fetching votes: %v\n", err)
-		return 1
+		return exitErr
 	}
 	if len(voteCiphertexts) == 0 {
 		fmt.Fprintf(os.Stderr, "error: poll has no votes to aggregate\n")
-		return 1
+		return exitErr
 	}
 
 	// 5. Aggregate ciphertexts per-bin.
@@ -159,28 +171,28 @@ func closePollCore(pollID, skHex, sigHex, ethKeyHex, serverURL, keyDir string, c
 	for i, cts := range voteCiphertexts {
 		if len(cts) != prover.TallyDecryptChoices {
 			fmt.Fprintf(os.Stderr, "error: vote[%d] has %d ciphertexts, want %d\n", i, len(cts), prover.TallyDecryptChoices)
-			return 1
+			return exitErr
 		}
 		for j := 0; j < prover.TallyDecryptChoices; j++ {
 			aBuf, err := hex.DecodeString(cts[j].A)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "error: vote[%d].ct[%d].A decode: %v\n", i, j, err)
-				return 1
+				return exitErr
 			}
 			bBuf, err := hex.DecodeString(cts[j].B)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "error: vote[%d].ct[%d].B decode: %v\n", i, j, err)
-				return 1
+				return exitErr
 			}
 			a, err := prover.DecodePoint(aBuf)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "error: vote[%d].ct[%d].A: %v\n", i, j, err)
-				return 1
+				return exitErr
 			}
 			b, err := prover.DecodePoint(bBuf)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "error: vote[%d].ct[%d].B: %v\n", i, j, err)
-				return 1
+				return exitErr
 			}
 			aggA[j].Add(&aggA[j], &a)
 			aggB[j].Add(&aggB[j], &b)
@@ -195,7 +207,7 @@ func closePollCore(pollID, skHex, sigHex, ethKeyHex, serverURL, keyDir string, c
 		t_, err := prover.Decrypt(ct, sk, maxTally)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: decrypt bin %d: %v\n", j, err)
-			return 1
+			return exitErr
 		}
 		tallies[j] = int64(t_)
 	}
@@ -215,14 +227,14 @@ func closePollCore(pollID, skHex, sigHex, ethKeyHex, serverURL, keyDir string, c
 		s, addr, err := server.SignEIP191(sigPayload, ethKeyHex)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: sign with eth-key: %v\n", err)
-			return 1
+			return exitErr
 		}
 		finalSig = s
 		creator = addr
 	default:
 		fmt.Printf("\nSign the payload above with your Ethereum wallet, then re-run with:\n")
 		fmt.Printf("  bitwrap close-poll %s --sk-hex=<hex> --signature=<sig>\n", pollID)
-		return 2
+		return exitNeedsSignature
 	}
 
 	// 9. Compile tallyDecrypt_8 and build proof.
@@ -230,7 +242,7 @@ func closePollCore(pollID, skHex, sigHex, ethKeyHex, serverURL, keyDir string, c
 	proofBytes, err := buildTallyDecryptProof(aggA, aggB, sk, &pk, tallies, keyDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: build decrypt proof: %v\n", err)
-		return 1
+		return exitErr
 	}
 	fmt.Printf("Proof generated (%d bytes)\n", len(proofBytes))
 
@@ -244,15 +256,15 @@ func closePollCore(pollID, skHex, sigHex, ethKeyHex, serverURL, keyDir string, c
 	respBody, statusCode, err := postJSON(client, serverURL+"/api/polls/"+pollID+"/aggregate", body)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: POST aggregate: %v\n", err)
-		return 1
+		return exitErr
 	}
 	if statusCode == http.StatusConflict {
 		fmt.Printf("Poll %q is already closed (server returned 409).\n", pollID)
-		return 0
+		return exitOK
 	}
 	if statusCode != http.StatusOK {
 		fmt.Fprintf(os.Stderr, "error: server returned %d: %s\n", statusCode, string(respBody))
-		return 1
+		return exitErr
 	}
 	fmt.Printf("Poll %q closed successfully.\n", pollID)
 	// Pretty-print the server response.
@@ -262,7 +274,7 @@ func closePollCore(pollID, skHex, sigHex, ethKeyHex, serverURL, keyDir string, c
 			fmt.Printf("%s\n", out)
 		}
 	}
-	return 0
+	return exitOK
 }
 
 // pollMeta is a minimal struct for deserialising GET /api/polls/{id}.

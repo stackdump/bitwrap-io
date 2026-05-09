@@ -46,11 +46,6 @@ func AggregateSigPayload(pollID string, tallies []int64) string {
 	return "bitwrap-aggregate-tally:" + pollID + ":" + strings.Join(parts, ",")
 }
 
-// aggregateSigPayload is the unexported alias kept for internal call sites.
-func aggregateSigPayload(pollID string, tallies []int64) string {
-	return AggregateSigPayload(pollID, tallies)
-}
-
 // handleAggregateV3 closes a v3 poll: aggregates ciphertexts, verifies
 // the creator's decrypt proof, persists tally.json, and marks the
 // poll closed. Atomic — either the artifact lands and the poll is
@@ -128,7 +123,7 @@ func (s *Server) handleAggregateV3(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify creator signature over canonical payload.
-	sigMsg := aggregateSigPayload(pollID, req.Tallies)
+	sigMsg := AggregateSigPayload(pollID, req.Tallies)
 	if !VerifySignature(sigMsg, req.Signature, poll.Creator) {
 		http.Error(w, "only the poll creator can aggregate", http.StatusForbidden)
 		return
