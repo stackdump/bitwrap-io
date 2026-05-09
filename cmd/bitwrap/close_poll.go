@@ -11,7 +11,6 @@ import (
 	"math/big"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/consensys/gnark-crypto/ecc"
@@ -202,7 +201,7 @@ func closePollCore(pollID, skHex, sigHex, ethKeyHex, serverURL, keyDir string, c
 	}
 
 	// 7. Build and print the signing payload.
-	sigPayload := closePollSigPayload(pollID, tallies)
+	sigPayload := server.AggregateSigPayload(pollID, tallies)
 	fmt.Printf("Tallies: %v\n", tallies)
 	fmt.Printf("Signing payload: %s\n", sigPayload)
 
@@ -264,16 +263,6 @@ func closePollCore(pollID, skHex, sigHex, ethKeyHex, serverURL, keyDir string, c
 		}
 	}
 	return 0
-}
-
-// closePollSigPayload mirrors aggregateSigPayload in
-// internal/server/polls_v3_aggregate.go. Must stay byte-identical.
-func closePollSigPayload(pollID string, tallies []int64) string {
-	parts := make([]string, len(tallies))
-	for i, t := range tallies {
-		parts[i] = strconv.FormatInt(t, 10)
-	}
-	return "bitwrap-aggregate-tally:" + pollID + ":" + strings.Join(parts, ",")
 }
 
 // pollMeta is a minimal struct for deserialising GET /api/polls/{id}.

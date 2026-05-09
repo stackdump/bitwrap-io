@@ -32,16 +32,23 @@ type aggregateRequest struct {
 	DecryptProofBytes string  `json:"decryptProofBytes"`
 }
 
-// aggregateSigPayload returns the canonical EIP-191 message scoped to
+// AggregateSigPayload returns the canonical EIP-191 message scoped to
 // (pollID, tallies). Strict ordering: comma-joined decimals, no spaces.
 // Reusing this prefix on a different poll, or with different tallies,
 // invalidates the signature.
-func aggregateSigPayload(pollID string, tallies []int64) string {
+// This function is exported so the CLI close-poll subcommand can produce
+// a byte-identical payload without duplicating the format logic.
+func AggregateSigPayload(pollID string, tallies []int64) string {
 	parts := make([]string, len(tallies))
 	for i, t := range tallies {
 		parts[i] = strconv.FormatInt(t, 10)
 	}
 	return "bitwrap-aggregate-tally:" + pollID + ":" + strings.Join(parts, ",")
+}
+
+// aggregateSigPayload is the unexported alias kept for internal call sites.
+func aggregateSigPayload(pollID string, tallies []int64) string {
+	return AggregateSigPayload(pollID, tallies)
 }
 
 // handleAggregateV3 closes a v3 poll: aggregates ciphertexts, verifies

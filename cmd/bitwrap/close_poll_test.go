@@ -9,8 +9,9 @@ import (
 	"testing"
 )
 
-// mockHandler serves fixed poll/votes/aggregate responses for CLI unit tests.
-func mockHandler(pollResp, votesResp interface{}, aggCode int, aggCapture *map[string]interface{}) http.HandlerFunc {
+// closePollMockHandler creates an http.HandlerFunc that serves fixed poll,
+// votes, and aggregate responses for close-poll CLI unit tests.
+func closePollMockHandler(pollResp, votesResp interface{}, aggCode int, aggCapture *map[string]interface{}) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
@@ -32,7 +33,7 @@ func mockHandler(pollResp, votesResp interface{}, aggCode int, aggCapture *map[s
 // TestRunClosePollRejectsV1Poll checks that the CLI exits with code 1 for a
 // v1/v2 poll (voteSchemaVersion != 3).
 func TestRunClosePollRejectsV1Poll(t *testing.T) {
-	ts := httptest.NewServer(mockHandler(
+	ts := httptest.NewServer(closePollMockHandler(
 		map[string]interface{}{
 			"id": "p1", "creator": "0x1234", "pkCreator": "",
 			"voteSchemaVersion": 1, "status": "active",
@@ -51,7 +52,7 @@ func TestRunClosePollRejectsV1Poll(t *testing.T) {
 // TestRunClosePollRejectsAlreadyClosed checks that the CLI exits with code 1
 // when the poll is already closed.
 func TestRunClosePollRejectsAlreadyClosed(t *testing.T) {
-	ts := httptest.NewServer(mockHandler(
+	ts := httptest.NewServer(closePollMockHandler(
 		map[string]interface{}{
 			"id": "p2", "creator": "0x1234", "pkCreator": "",
 			"voteSchemaVersion": 3, "status": "closed",
@@ -112,7 +113,7 @@ func TestRunClosePollPrintsPayloadWhenNoSig(t *testing.T) {
 		ciphertexts[i] = map[string]string{"A": idHex, "B": idHex}
 	}
 
-	ts := httptest.NewServer(mockHandler(
+	ts := httptest.NewServer(closePollMockHandler(
 		map[string]interface{}{
 			"id": "p3", "creator": "0xdeadbeef",
 			// pkCreator: 32 zero bytes as hex — identity point Y=0,X=0 which
