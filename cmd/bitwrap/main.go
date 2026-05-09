@@ -34,6 +34,19 @@ func main() {
 	validate := flag.String("validate", "", "Validate a .btw file: compile → generate Solidity → forge build → forge test → deploy")
 	output := flag.String("output", "", "Save generated Foundry project to this directory (use with -validate)")
 	synthesize := flag.String("synthesize", "", "Synthesize gnark circuits from an ERC template (erc020|erc05725|vote) or a .btw DSL path. Writes Go source to -output (or stdout).")
+
+	// Custom usage to surface subcommands at the top level. Without this
+	// `bitwrap` with no args (or `bitwrap -h`) prints only flag help,
+	// hiding `close-poll` from anyone discovering features.
+	flag.CommandLine.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage:\n")
+		fmt.Fprintf(os.Stderr, "  bitwrap [flags]              run the server / one-shot operation\n")
+		fmt.Fprintf(os.Stderr, "  bitwrap <subcommand> [flags] run an operator subcommand\n\n")
+		fmt.Fprintf(os.Stderr, "Subcommands:\n")
+		fmt.Fprintf(os.Stderr, "  close-poll <pollID>          drive the v3 close lifecycle from the operator's machine\n\n")
+		fmt.Fprintf(os.Stderr, "Top-level flags:\n")
+		flag.PrintDefaults()
+	}
 	flag.Parse()
 
 	// Handle subcommands before flag-based modes.
@@ -42,9 +55,8 @@ func main() {
 		case "close-poll":
 			os.Exit(runClosePoll(flag.Args()[1:]))
 		default:
-			fmt.Fprintf(os.Stderr, "unknown subcommand %q\n", flag.Arg(0))
-			fmt.Fprintf(os.Stderr, "Usage: bitwrap [flags] | bitwrap <subcommand> [flags]\n")
-			fmt.Fprintf(os.Stderr, "Subcommands: close-poll\n")
+			fmt.Fprintf(os.Stderr, "unknown subcommand %q\n\n", flag.Arg(0))
+			flag.CommandLine.Usage()
 			os.Exit(1)
 		}
 	}

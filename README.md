@@ -129,16 +129,30 @@ bitwrap close-poll <pollId> --sk-hex=<hex> --eth-key=<hex> \
 ```
 
 The subcommand:
-1. Fetches `/api/polls/{id}/votes` — the list of per-bin aggregate ciphertexts.
-2. Aggregates the ciphertexts across all ballots.
-3. Decrypts each bin with `--sk-hex` to recover the tally vector.
+1. Fetches `/api/polls/{id}/votes` — the per-vote ciphertext list (one record per ballot).
+2. Aggregates the ciphertexts per-bin across all ballots.
+3. Decrypts each bin with the BabyJubJub secret key to recover the tally vector.
 4. Compiles `tallyDecrypt_8` locally and runs `groth16.Prove` (Go-side — no WASM).
 5. POSTs `{creator, signature, tallies, decryptProofBytes}` to `/api/polls/{id}/aggregate`.
 
 v1/v2 polls are rejected with an informative error. This is the recommended path
 until browser-side close lands.
 
+For production use, prefer file-based or env-based key sources to avoid putting
+secret bytes in shell history:
 
+```sh
+# File-based (mode 0o600 strongly recommended on the key files)
+bitwrap close-poll <pollId> \
+    --sk-hex-file=./creator-bjj.key \
+    --eth-key-file=./creator-eth.key \
+    --server=https://bitwrap.io
+
+# Or via environment
+BITWRAP_SK_HEX=<hex> BITWRAP_ETH_KEY=<hex> bitwrap close-poll <pollId> --server=...
+```
+
+### ZK prover
 
 ```
 GET  /api/circuits              List available circuits

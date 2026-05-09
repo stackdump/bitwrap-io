@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	tedwards "github.com/consensys/gnark-crypto/ecc/bn254/twistededwards"
@@ -43,6 +44,15 @@ message that must be signed by the poll creator's Ethereum wallet and exits
 with code 2 (exitNeedsSignature).  Sign the printed message and re-run with
 --signature or supply --eth-key to sign internally.
 
+Secret-key sources (in priority order):
+  --sk-hex-file <path>    BabyJubJub key from a 0o600 file (recommended)
+  $BITWRAP_SK_HEX         BabyJubJub key from environment
+  --sk-hex <hex>          BabyJubJub key on the command line (warns; visible in shell history)
+
+  --eth-key-file <path>   Ethereum signing key from a 0o600 file (recommended)
+  $BITWRAP_ETH_KEY        Ethereum signing key from environment
+  --eth-key <hex>         Ethereum signing key on the command line (warns; visible in shell history)
+
 Flags:
 `)
 	fs.PrintDefaults()
@@ -58,56 +68,105 @@ func runClosePoll(args []string) int {
 	fs := flag.NewFlagSet("close-poll", flag.ContinueOnError)
 	fs.Usage = func() { closePollUsage(fs) }
 
-	skHex := fs.String("sk-hex", "", "Creator's BabyJubJub secret key (hex, required)")
-	sigHex := fs.String("signature", "", "EIP-191 signature over bitwrap-aggregate-tally:{pollID}:{tallies} (optional; if omitted the payload is printed for external signing)")
-	ethKeyHex := fs.String("eth-key", "", "Ethereum private key hex to sign internally (alternative to --signature)")
-	serverURL := fs.String("server", "http://localhost:8088", "Base URL of the bitwrap server")
-	keyDir := fs.String("key-dir", "", "Directory for persistent circuit keys (enables fast restarts)")
+	skHex := fs.String("sk-hex", "", "Creator's BabyJubJub secret key (hex). Visible in shell history; prefer --sk-hex-file or $BITWRAP_SK_HEX.")
+	skHexFile := fs.String("sk-hex-file", "", "Path to a file containing the BabyJubJub secret key hex (single line, 0o600).")
+	sigHex := fs.String("signature", "", "EIP-191 signature over bitwrap-aggregate-tally:{pollID}:{tallies} (optional; if omitted the payload is printed for external signing).")
+	ethKeyHex := fs.String("eth-key", "", "Ethereum private key hex to sign internally. Visible in shell history; prefer --eth-key-file or $BITWRAP_ETH_KEY.")
+	ethKeyFile := fs.String("eth-key-file", "", "Path to a file containing the Ethereum private key hex (single line, 0o600).")
+	serverURL := fs.String("server", "http://localhost:8088", "Base URL of the bitwrap server.")
+	keyDir := fs.String("key-dir", "", "Directory for persistent circuit keys (enables fast restarts).")
+	httpTimeout := fs.Duration("http-timeout", 60*time.Second, "Timeout per HTTP request to the bitwrap server.")
 
-	// Extract the poll ID from args: it is the first arg that does not start
-	// with "-".  The Go flag package stops at the first non-flag arg, so if
-	// the caller writes `close-poll <id> --flag ...` the flags after <id> are
-	// left unparsed.  We detect this and re-parse the tail so that the user
-	// can place the poll ID anywhere in the argument list.
-	var pollID string
-	var flagArgs []string
-	for i, a := range args {
-		if len(a) > 0 && a[0] != '-' && pollID == "" {
-			pollID = a
-			flagArgs = append(flagArgs, args[:i]...)
-			flagArgs = append(flagArgs, args[i+1:]...)
-			break
-		}
-	}
-	if pollID == "" {
-		flagArgs = args
-	}
-
+	// Lift the first non-flag arg out as <pollID>, then parse the rest as
+	// flags. Go's `flag` package stops at the first non-flag, so without
+	// this lift `bitwrap close-poll <pollID> --flag …` would treat the
+	// flags as positional. README and existing scripts use positional-first,
+	// so the lift is the better contract.
+	pollID, flagArgs := liftFirstPositional(args)
 	if err := fs.Parse(flagArgs); err != nil {
 		return exitErr
 	}
-
-	// Fall back to first remaining positional if pollID not yet found.
+	// Allow `bitwrap close-poll --flag … <pollID>` too — fall back to the
+	// trailing positional if no leading positional was present.
 	if pollID == "" && fs.NArg() > 0 {
 		pollID = fs.Arg(0)
 	}
-
 	if pollID == "" {
-		fmt.Fprintf(os.Stderr, "error: exactly one positional argument <pollID> required\n")
+		fmt.Fprintf(os.Stderr, "error: positional argument <pollID> required\n")
 		closePollUsage(fs)
 		return exitErr
 	}
 
-	if *skHex == "" {
-		fmt.Fprintf(os.Stderr, "error: --sk-hex is required\n")
+	// Resolve secret-key inputs through file → env → flag, warning if the
+	// flag path is used (key bytes end up in shell history / ps output).
+	resolvedSk, err := resolveSecret("sk-hex", *skHex, *skHexFile, "BITWRAP_SK_HEX")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return exitErr
 	}
-	if *sigHex != "" && *ethKeyHex != "" {
-		fmt.Fprintf(os.Stderr, "error: --signature and --eth-key are mutually exclusive\n")
+	if resolvedSk == "" {
+		fmt.Fprintf(os.Stderr, "error: a BabyJubJub secret key is required (--sk-hex / --sk-hex-file / $BITWRAP_SK_HEX)\n")
+		return exitErr
+	}
+	resolvedEthKey, err := resolveSecret("eth-key", *ethKeyHex, *ethKeyFile, "BITWRAP_ETH_KEY")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return exitErr
 	}
 
-	return closePollCore(pollID, *skHex, *sigHex, *ethKeyHex, *serverURL, *keyDir, http.DefaultClient)
+	if *sigHex != "" && resolvedEthKey != "" {
+		fmt.Fprintf(os.Stderr, "error: --signature and --eth-key/--eth-key-file are mutually exclusive\n")
+		return exitErr
+	}
+
+	client := &http.Client{Timeout: *httpTimeout}
+	return closePollCore(pollID, resolvedSk, *sigHex, resolvedEthKey, *serverURL, *keyDir, client)
+}
+
+// resolveSecret picks the secret value from (in priority order) a file path,
+// environment variable, or flag value. Returns the empty string if none of
+// the three are set. Prints a one-line stderr warning when the flag path is
+// the value source because flag values land in shell history and `ps` output.
+//
+// File and flag are independently allowed (file wins silently); supplying
+// both is reasonable when a file is the source of truth and the flag is a
+// leftover from a prior invocation. The mutex is enforced separately
+// between --signature and --eth-key in the caller.
+func resolveSecret(name, flagValue, filePath, envVar string) (string, error) {
+	if filePath != "" {
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			return "", fmt.Errorf("--%s-file: %w", name, err)
+		}
+		return strings.TrimSpace(string(data)), nil
+	}
+	if envValue := os.Getenv(envVar); envValue != "" {
+		return envValue, nil
+	}
+	if flagValue != "" {
+		fmt.Fprintf(os.Stderr,
+			"warning: --%s is set on the command line; secret bytes are visible in shell history and ps. Prefer --%s-file or $%s.\n",
+			name, name, envVar)
+		return flagValue, nil
+	}
+	return "", nil
+}
+
+// liftFirstPositional pulls the first arg that doesn't begin with "-" out
+// of `args` and returns it alongside the remaining args. Used so the user
+// can write either `bitwrap close-poll <id> --flags…` or
+// `bitwrap close-poll --flags… <id>`.
+func liftFirstPositional(args []string) (positional string, rest []string) {
+	for i, a := range args {
+		if a == "" || a[0] == '-' {
+			continue
+		}
+		// Take this arg as positional, return the rest concatenated.
+		rest = append(rest, args[:i]...)
+		rest = append(rest, args[i+1:]...)
+		return a, rest
+	}
+	return "", args
 }
 
 // closePollCore is the testable core of the close-poll subcommand.

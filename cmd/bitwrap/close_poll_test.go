@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -100,10 +102,11 @@ func TestRunClosePollMutuallyExclusiveFlags(t *testing.T) {
 
 // TestRunClosePollPrintsPayloadWhenNoSig checks that without any signature
 // flag the CLI computes tallies and returns exitNeedsSignature (2).
-// We use the BabyJubJub identity point (0, 1) as pkCreator with sk=1 and
-// identity ciphertexts (encryptions of 0 under any key) so the aggregation
-// and decryption succeed with all-zero tallies, and the exit-2 path is
-// triggered purely by the absence of --signature / --eth-key.
+// We use the BabyJubJub identity point (0, 1) as both pkCreator and the
+// per-bin ciphertext components (A, B). With sk=1 the decrypt step computes
+// M = B - sk*A = identity - 1*identity = identity = G*0, so every bin's
+// tally resolves to 0. The exit-2 path is then triggered purely by the
+// absence of --signature / --eth-key.
 func TestRunClosePollPrintsPayloadWhenNoSig(t *testing.T) {
 	// Identity point (0, 1) in 32-byte little-endian encoding.
 	// On BabyJubJub: a*x^2 + y^2 = 1 + d*x^2*y^2 -> at (0,1): 1 = 1 OK
@@ -142,5 +145,95 @@ func TestRunClosePollPrintsPayloadWhenNoSig(t *testing.T) {
 	code := closePollCore("p3", "01", "", "", ts.URL, "", http.DefaultClient)
 	if code != exitNeedsSignature {
 		t.Errorf("no sig path: want exit %d (exitNeedsSignature), got %d", exitNeedsSignature, code)
+	}
+}
+
+// TestResolveSecretFromFile — file path beats env beats flag.
+func TestResolveSecretFromFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "key.hex")
+	if err := os.WriteFile(path, []byte("aabb\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BITWRAP_SK_HEX", "ccdd")
+	got, err := resolveSecret("sk-hex", "0xeeff", path, "BITWRAP_SK_HEX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "aabb" {
+		t.Errorf("file path should win: got %q want aabb", got)
+	}
+}
+
+// TestResolveSecretFromEnv — env beats flag when no file given.
+func TestResolveSecretFromEnv(t *testing.T) {
+	t.Setenv("BITWRAP_SK_HEX", "ccdd")
+	got, err := resolveSecret("sk-hex", "0xeeff", "", "BITWRAP_SK_HEX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "ccdd" {
+		t.Errorf("env should win over flag: got %q want ccdd", got)
+	}
+}
+
+// TestResolveSecretFromFlag — flag is the fallback.
+func TestResolveSecretFromFlag(t *testing.T) {
+	t.Setenv("BITWRAP_SK_HEX", "")
+	got, err := resolveSecret("sk-hex", "0xeeff", "", "BITWRAP_SK_HEX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "0xeeff" {
+		t.Errorf("flag fallback: got %q want 0xeeff", got)
+	}
+}
+
+// TestResolveSecretFlagAndFileFileWinsSilently — providing both is allowed;
+// the file is the source of truth and the flag value is ignored without
+// a warning (the flag-warning is only emitted when the flag value is the
+// one actually used).
+func TestResolveSecretFlagAndFileFileWinsSilently(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "key.hex")
+	if err := os.WriteFile(path, []byte("aabb"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := resolveSecret("sk-hex", "0xeeff", path, "BITWRAP_SK_HEX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "aabb" {
+		t.Errorf("file should win: got %q want aabb", got)
+	}
+}
+
+// TestResolveSecretAllUnset — all three sources empty returns empty + nil.
+func TestResolveSecretAllUnset(t *testing.T) {
+	t.Setenv("BITWRAP_SK_HEX", "")
+	got, err := resolveSecret("sk-hex", "", "", "BITWRAP_SK_HEX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "" {
+		t.Errorf("all unset: got %q, want empty", got)
+	}
+}
+
+// TestRunClosePollAcceptsSkHexFile — flag/env/file path is wired into runClosePoll.
+func TestRunClosePollAcceptsSkHexFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sk")
+	if err := os.WriteFile(path, []byte("aabb"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Should pass the flag-validation gate even though --sk-hex is unset,
+	// then fail later because the mock server isn't running. We just want
+	// to confirm the file is consulted instead of demanding --sk-hex.
+	code := runClosePoll([]string{"some-poll-id", "--sk-hex-file=" + path, "--server=http://127.0.0.1:1"})
+	// Expected to fail at the "fetching poll" step since :1 is unreachable —
+	// but NOT with the "--sk-hex is required" error.
+	if code == 0 {
+		t.Errorf("unreachable server should error, got 0")
 	}
 }

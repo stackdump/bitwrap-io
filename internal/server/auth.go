@@ -68,14 +68,30 @@ func devSign(message string) (string, string) {
 //
 // Intended for operator tools (e.g. the close-poll CLI subcommand) that
 // hold key material directly rather than delegating to a browser wallet.
+//
+// Errors distinguish the failure point so callers can surface specific
+// messages: empty/missing input, malformed hex, out-of-range scalar, or
+// a sign-time degeneracy.
 func SignEIP191(message, ethPrivKeyHex string) (sig, addr string, err error) {
-	k, ok := new(big.Int).SetString(strings.TrimPrefix(ethPrivKeyHex, "0x"), 16)
-	if !ok || k.Sign() == 0 {
-		return "", "", fmt.Errorf("invalid Ethereum private key hex")
+	hexBody := strings.TrimPrefix(ethPrivKeyHex, "0x")
+	if hexBody == "" {
+		return "", "", fmt.Errorf("Ethereum private key is empty")
+	}
+	k, ok := new(big.Int).SetString(hexBody, 16)
+	if !ok {
+		return "", "", fmt.Errorf("Ethereum private key is not valid hex")
+	}
+	if k.Sign() == 0 {
+		return "", "", fmt.Errorf("Ethereum private key is zero")
+	}
+	if k.Cmp(secp256k1N) >= 0 {
+		return "", "", fmt.Errorf("Ethereum private key is >= secp256k1 group order")
 	}
 	s, a := devSignWithKey(message, k)
 	if s == "" || a == "" {
-		return "", "", fmt.Errorf("EIP-191 signing failed")
+		// devSignWithKey doesn't fail under valid input; reaching here
+		// means an internal invariant was violated.
+		return "", "", fmt.Errorf("EIP-191 signing produced an empty result (internal error)")
 	}
 	return s, a, nil
 }
