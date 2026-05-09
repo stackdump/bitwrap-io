@@ -2,6 +2,7 @@ package server
 
 import (
 	"archive/zip"
+	"bytes"
 	"fmt"
 	"log"
 	"net/http"
@@ -31,37 +32,59 @@ func (s *Server) handleBundleVoteV3(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, fmt.Sprintf("export %s verifier: %v", tallyCircuit, err), http.StatusInternalServerError)
 		return
 	}
+	voteVerifierSol, err := renameVerifierContract(string(voteVerifier), "Verifier_voteCastHomomorphic_8")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	tallyVerifierSol, err := renameVerifierContract(string(tallyVerifier), "Verifier_tallyDecrypt_8")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	files := map[string]string{
 		"foundry.toml":                           v3FoundryToml,
 		"src/BitwrapZKPollV3.sol":                v3PollContract,
-		"src/Verifier_voteCastHomomorphic_8.sol": renameVerifierContract(string(voteVerifier), "Verifier_voteCastHomomorphic_8"),
-		"src/Verifier_tallyDecrypt_8.sol":        renameVerifierContract(string(tallyVerifier), "Verifier_tallyDecrypt_8"),
+		"src/Verifier_voteCastHomomorphic_8.sol": voteVerifierSol,
+		"src/Verifier_tallyDecrypt_8.sol":        tallyVerifierSol,
 		"test/BitwrapZKPollV3.t.sol":             v3FoundryTest,
 		"script/DeployV3.s.sol":                  v3DeployScript,
 		"README.md":                              v3BundleREADME,
 	}
 
-	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", "attachment; filename=BitwrapZKPollV3.zip")
-
-	zw := zip.NewWriter(w)
-	defer zw.Close()
+	var zipBuf bytes.Buffer
+	zw := zip.NewWriter(&zipBuf)
 	for name, content := range files {
 		fw, err := zw.Create(name)
 		if err != nil {
 			log.Printf("bundle-v3: failed to create zip entry %s: %v", name, err)
+			http.Error(w, "failed to create bundle entry", http.StatusInternalServerError)
 			return
 		}
 		if _, err := fw.Write([]byte(content)); err != nil {
 			log.Printf("bundle-v3: failed to write zip entry %s: %v", name, err)
+			http.Error(w, "failed to write bundle entry", http.StatusInternalServerError)
 			return
 		}
 	}
+	if err := zw.Close(); err != nil {
+		log.Printf("bundle-v3: failed to finalize zip: %v", err)
+		http.Error(w, "failed to finalize bundle", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", "attachment; filename=BitwrapZKPollV3.zip")
+	_, _ = w.Write(zipBuf.Bytes())
 }
 
-func renameVerifierContract(soliditySource, contractName string) string {
-	return strings.Replace(soliditySource, "contract Verifier {", "contract "+contractName+" {", 1)
+func renameVerifierContract(soliditySource, contractName string) (string, error) {
+	const oldDecl = "contract Verifier {"
+	if !strings.Contains(soliditySource, oldDecl) {
+		return "", fmt.Errorf("unexpected verifier format: contract declaration not found")
+	}
+	return strings.Replace(soliditySource, oldDecl, "contract "+contractName+" {", 1), nil
 }
 
 const v3FoundryToml = `[profile.default]
@@ -263,6 +286,7 @@ contract DeployV3 is Script {
         Verifier_voteCastHomomorphic_8 voteVerifier = new Verifier_voteCastHomomorphic_8();
         Verifier_tallyDecrypt_8 tallyVerifier = new Verifier_tallyDecrypt_8();
 
+        // Replace with the real creator public key coordinates before broadcast.
         uint256[2] memory pkCreator = [uint256(0), uint256(0)];
         new BitwrapZKPollV3(pkCreator, address(voteVerifier), address(tallyVerifier));
 

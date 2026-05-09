@@ -143,8 +143,14 @@ func TestHandleVKV3SolidityCompilesAndVerifiesOnChain(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	voteVerifierSol := renameVerifierContract(voteVerifier.Body.String(), "Verifier_voteCastHomomorphic_8")
-	tallyVerifierSol := renameVerifierContract(tallyVerifier.Body.String(), "Verifier_tallyDecrypt_8")
+	voteVerifierSol, err := renameVerifierContract(voteVerifier.Body.String(), "Verifier_voteCastHomomorphic_8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tallyVerifierSol, err := renameVerifierContract(tallyVerifier.Body.String(), "Verifier_tallyDecrypt_8")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(foundryDir, "src", "Verifier_voteCastHomomorphic_8.sol"), []byte(voteVerifierSol), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -330,13 +336,6 @@ func proofWords(t *testing.T, proof []byte, want int) []string {
 		out[i] = v.String()
 	}
 	return out
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func runLocalCmd(t *testing.T, dir, name string, args ...string) {
