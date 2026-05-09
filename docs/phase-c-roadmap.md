@@ -20,7 +20,7 @@ Key properties:
 
 ## Work breakdown
 
-Estimated one-engineer effort: **3–6 weeks** end-to-end, depending on DKG and coordinator networking maturity.
+Estimated one-engineer effort: **3–6 weeks** end-to-end, depending on DKG and coordinator networking maturity. This estimate excludes third-party security audit and cryptanalysis time.
 
 ### C1. Protocol specification + schema lock — DONE
 

@@ -64,6 +64,8 @@ Combiner accepts first `t` valid, unique partials and reconstructs:
 
 `A_j^x = Π_{i in S} D_{i,j}^{λ_i(S)}`
 
+Here `Π` is a group-element product (elliptic-curve point addition in exponent form), not integer multiplication.
+
 where `S` is selected coordinator index set (`|S|=t`) and `λ_i(S)` are Lagrange coefficients at 0.
 
 Then:
@@ -165,7 +167,13 @@ Recovery policy:
   "schemaVersion": 4,
   "threshold": { "n": 5, "t": 4 },
   "coordinators": [
-    { "index": 1, "address": "0x...", "encPubKey": "0x...", "endpoint": "https://..." }
+    {
+      "index": 1,
+      "address": "0x...",
+      "encPubKey": "0x...",
+      "signingPubKey": "0x...",
+      "endpoint": "https://..."
+    }
   ],
   "pkCommittee": "0x...",
   "dkgTranscriptRoot": "0x..."
