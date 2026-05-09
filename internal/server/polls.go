@@ -533,6 +533,11 @@ func (s *Server) handleClosePoll(w http.ResponseWriter, r *http.Request) {
 
 // handleRevealVote allows a voter to reveal their choice after the poll closes.
 // Verifies mimcHash(voterSecret, voteChoice) == storedCommitment.
+//
+// v3 polls have no reveal phase — per-voter choices are encrypted at
+// submission and never decrypted individually. Posting to /reveal on a
+// v3 poll returns 404 so the absence of the endpoint, not "method not
+// allowed", surfaces to confused clients.
 func (s *Server) handleRevealVote(w http.ResponseWriter, r *http.Request) {
 	pollID := extractPollID(r.URL.Path)
 	if pollID == "" {
@@ -543,6 +548,11 @@ func (s *Server) handleRevealVote(w http.ResponseWriter, r *http.Request) {
 	poll, err := s.store.ReadPoll(pollID)
 	if err != nil {
 		http.Error(w, "Poll not found", http.StatusNotFound)
+		return
+	}
+
+	if poll.VoteSchemaVersion == 3 {
+		http.Error(w, "v3 polls have no reveal phase — see /tally for results", http.StatusNotFound)
 		return
 	}
 
@@ -640,18 +650,43 @@ func (s *Server) handlePollResults(w http.ResponseWriter, r *http.Request) {
 	}
 
 	votes, _ := s.store.ListVotes(pollID)
+
+	result := map[string]interface{}{
+		"pollId":            pollID,
+		"title":             poll.Title,
+		"choices":           poll.Choices,
+		"status":            poll.Status,
+		"voteSchemaVersion": poll.VoteSchemaVersion,
+	}
+
+	// v3 results never include per-voter data — even nullifiers are
+	// kept off this endpoint to avoid implying any link to ciphertexts.
+	// Voters who want to verify their own ballot was counted can hit
+	// /nullifiers separately. While active, only voteCount; once
+	// closed, the tally artifact (aggregate ciphertexts + tallies +
+	// decrypt proof) is returned in full.
+	if poll.VoteSchemaVersion == 3 {
+		result["voteCount"] = len(votes)
+		if poll.Status != "active" {
+			if artifact, err := s.store.ReadHomomorphicTally(pollID); err == nil {
+				result["tally"] = artifact
+			}
+			// If the poll is closed but no artifact exists yet (a
+			// transient state during aggregation), the response just
+			// reflects voteCount with no tally — clients re-poll.
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
+		return
+	}
+
+	// v1/v2: nullifiers and commitments are part of the public tally
+	// audit trail. Pre-existing surface, retained.
 	nullifiers := make([]string, len(votes))
 	commitments := make([]string, len(votes))
 	for i, v := range votes {
 		nullifiers[i] = v.Nullifier
 		commitments[i] = v.VoteCommitment
-	}
-
-	result := map[string]interface{}{
-		"pollId":  pollID,
-		"title":   poll.Title,
-		"choices": poll.Choices,
-		"status":  poll.Status,
 	}
 
 	// While active, only expose vote count — no tallies, nullifiers, or
