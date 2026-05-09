@@ -97,15 +97,15 @@ test.describe('v3 maximum-privacy poll UI', () => {
         await expect(page.locator('#v3-privacy-banner')).toBeHidden();
     });
 
-    // Full create → register → vote → close lifecycle. Skipped until
-    // the witness/circuit value-mismatch surfaced in WASM-side prove
-    // is resolved. The Go-side equivalents (TestCastVoteV3HappyPath,
-    // TestAggregateV3HappyPath, TestV3PollDirHasNoChoiceLeakage)
-    // already prove the protocol works end-to-end with real
-    // ciphertexts and real proofs — what's missing is just the
-    // browser-side proving path. Re-enable when the JS witness
-    // shape exactly matches the gnark constraint system at runtime.
+    // Full create → register → vote → close lifecycle. The underlying
+    // gnark-wasm prove blocker (issue #3) is now worked around by
+    // recompiling cs in-browser via `loadKeysFreshCS`. The test body
+    // itself still needs to be written — voter registration + ballot
+    // submission + creator close from a real Chromium tab takes
+    // multiple minutes (one-time circuit compile per browser session
+    // is ~50s; per-vote prove is ~10s). Until we have a sensible CI
+    // runner for that, this stays skipped — but unblocked.
     test.skip('create → register → vote → close (browser proving)', async () => {
-        // see PHASE_B / B5.11 follow-up notes
+        // TODO: implement now that issue #3 is unblocked.
     });
 });

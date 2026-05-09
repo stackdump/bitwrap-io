@@ -32,14 +32,16 @@ func main() {
 	fmt.Println("bitwrap-prover WASM loaded")
 
 	api := map[string]interface{}{
-		"version":        js.FuncOf(version),
-		"compileCircuit": js.FuncOf(compileCircuit),
-		"loadKeys":       js.FuncOf(loadKeys),
-		"loadVerifyOnly": js.FuncOf(loadVerifyOnly),
-		"prove":          js.FuncOf(prove),
-		"verify":         js.FuncOf(verify),
-		"mimcHash":       js.FuncOf(mimcHashJS),
-		"listCircuits":   js.FuncOf(listCircuits),
+		"version":         js.FuncOf(version),
+		"compileCircuit":  js.FuncOf(compileCircuit),
+		"loadKeys":        js.FuncOf(loadKeys),
+		"loadKeysFreshCS": js.FuncOf(loadKeysFreshCS),
+		"loadVerifyOnly":  js.FuncOf(loadVerifyOnly),
+		"exportKeys":      js.FuncOf(exportKeys),
+		"prove":           js.FuncOf(prove),
+		"verify":          js.FuncOf(verify),
+		"mimcHash":        js.FuncOf(mimcHashJS),
+		"listCircuits":    js.FuncOf(listCircuits),
 	}
 	js.Global().Set("bitwrapProver", js.ValueOf(api))
 
@@ -116,6 +118,52 @@ func loadKeys(_ js.Value, args []js.Value) interface{} {
 		"constraints": cs.GetNbConstraints(),
 		"publicVars":  cs.GetNbPublicVariables(),
 		"privateVars": cs.GetNbSecretVariables(),
+	})
+}
+
+// loadKeysFreshCS("voteCastHomomorphic_8", pkBytes, vkBytes) — recompile the
+// circuit fresh from its registered factory and pair it with the supplied
+// pk/vk bytes. Used as a workaround for a wasm32-specific gnark bug
+// (issue #3) where a cs read from disk produces an in-memory state that
+// causes scalarMulFakeGLV constraints to fail at prove time, even though
+// the cs bytes round-trip identically. Recompiling in-process avoids
+// that path; the resulting cs is byte-equivalent to the loaded one.
+func loadKeysFreshCS(_ js.Value, args []js.Value) interface{} {
+	if len(args) < 3 {
+		return jsError("usage: loadKeysFreshCS(name, pkBytes, vkBytes)")
+	}
+	name := args[0].String()
+
+	circuit := circuitByName(name)
+	if circuit == nil {
+		return jsError(fmt.Sprintf("unknown circuit: %s", name))
+	}
+
+	cs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, circuit)
+	if err != nil {
+		return jsError(fmt.Sprintf("compile failed: %v", err))
+	}
+
+	pkData := jsToBytes(args[1])
+	vkData := jsToBytes(args[2])
+
+	pk := groth16.NewProvingKey(ecc.BN254)
+	if _, err := pk.ReadFrom(newBytesReader(pkData)); err != nil {
+		return jsError(fmt.Sprintf("load pk: %v", err))
+	}
+
+	vk := groth16.NewVerifyingKey(ecc.BN254)
+	if _, err := vk.ReadFrom(newBytesReader(vkData)); err != nil {
+		return jsError(fmt.Sprintf("load vk: %v", err))
+	}
+
+	compiled[name] = &compiledCircuit{cs: cs, pk: pk, vk: vk}
+
+	return js.ValueOf(map[string]interface{}{
+		"constraints": cs.GetNbConstraints(),
+		"publicVars":  cs.GetNbPublicVariables(),
+		"privateVars": cs.GetNbSecretVariables(),
+		"freshCS":     true,
 	})
 }
 
@@ -261,6 +309,41 @@ func mimcHashJS(_ js.Value, args []js.Value) interface{} {
 	var rBig big.Int
 	r.BigInt(&rBig)
 	return rBig.String()
+}
+
+// exportKeys("voteCastHomomorphic_8") — return cs/pk/vk bytes for a previously
+// compiled circuit. The bytes are produced by the same WriteTo path the server
+// uses, so a wasm-side compile + exportKeys yields the wasm-flavored encoding
+// — useful for diagnosing the cross-arch round-trip and for shipping
+// pre-compiled keys that the wasm prover can re-load without recompiling.
+func exportKeys(_ js.Value, args []js.Value) interface{} {
+	if len(args) < 1 {
+		return jsError("usage: exportKeys(name)")
+	}
+	name := args[0].String()
+	cc, ok := compiled[name]
+	if !ok {
+		return jsError(fmt.Sprintf("circuit %q not loaded — call compileCircuit or loadKeys first", name))
+	}
+	if cc.cs == nil || cc.pk == nil || cc.vk == nil {
+		return jsError(fmt.Sprintf("circuit %q is loaded in verify-only mode", name))
+	}
+
+	var csBuf, pkBuf, vkBuf bytesBuffer
+	if _, err := cc.cs.WriteTo(&csBuf); err != nil {
+		return jsError(fmt.Sprintf("write cs: %v", err))
+	}
+	if _, err := cc.pk.WriteTo(&pkBuf); err != nil {
+		return jsError(fmt.Sprintf("write pk: %v", err))
+	}
+	if _, err := cc.vk.WriteTo(&vkBuf); err != nil {
+		return jsError(fmt.Sprintf("write vk: %v", err))
+	}
+	return js.ValueOf(map[string]interface{}{
+		"cs": bytesToJS(csBuf.data),
+		"pk": bytesToJS(pkBuf.data),
+		"vk": bytesToJS(vkBuf.data),
+	})
 }
 
 // listCircuits() — list loaded circuits

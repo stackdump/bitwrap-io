@@ -114,6 +114,41 @@ export async function loadKeys(name, keyUrl) {
   return result;
 }
 
+// Workaround for issue #3 (gnark wasm32 + scalarMulFakeGLV bug). Fetches
+// only pk/vk from the server and recompiles the cs fresh inside the
+// wasm prover. The cs bytes from disk would be byte-identical to a
+// fresh compile, but loading them produces an in-memory cs whose prove
+// path miscomputes scalarMulFakeGLV outputs on wasm32. Recompiling in
+// the same process avoids that path. Cost: a one-time circuit compile
+// (~50s for voteCastHomomorphic_8 / tallyDecrypt_8) per session.
+export async function loadKeysFreshCS(name, keyUrl) {
+  await initProver();
+  if (_keyCache[name]) return _keyCache[name];
+
+  const [pkResp, vkResp] = await Promise.all([
+    fetch(`${keyUrl}/${name}.pk`),
+    fetch(`${keyUrl}/${name}.vk`),
+  ]);
+  if (!pkResp.ok || !vkResp.ok) {
+    throw new Error(`Failed to fetch keys for ${name}`);
+  }
+  const [pkBytes, vkBytes] = await Promise.all([
+    pkResp.arrayBuffer().then(b => new Uint8Array(b)),
+    vkResp.arrayBuffer().then(b => new Uint8Array(b)),
+  ]);
+
+  if (_worker) {
+    const result = await sendWorkerMessage('loadKeysFreshCS', { name, pkBytes, vkBytes });
+    _keyCache[name] = result;
+    return result;
+  }
+
+  const result = bitwrapProver.loadKeysFreshCS(name, pkBytes, vkBytes);
+  if (result.error) throw new Error(result.error);
+  _keyCache[name] = result;
+  return result;
+}
+
 // Load only the verifying key for a circuit. Used by the in-browser
 // "Verify Proof" button so users don't have to download the proving
 // key (which can be many MB for larger circuits). `vkUrl` should point

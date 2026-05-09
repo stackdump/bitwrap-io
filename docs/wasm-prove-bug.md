@@ -1,27 +1,47 @@
-# gnark cs+pk serialization round-trip bug across architectures
+# gnark wasm32 prove bug after cs deserialize
 
-**Status:** open. Localized but not fixed.
+**Status:** worked-around in browser. Root cause not yet fixed upstream.
 **Surfaced:** Phase B / B5.11 (commit `19a6453`).
-**Impact:** v3 (homomorphic-tally) polls cannot complete the vote / close
-flow in a browser. Privacy contract is unaffected — the server-side
-lifecycle works end-to-end and the disk-leakage acceptance test
-(`internal/server/v3_disk_test.go`) passes.
+**Workaround landed:** 2026-05-09 — `loadKeysFreshCS` in the wasm prover.
+**Impact:** v3 (homomorphic-tally) polls **now** complete the vote / close
+flow in a browser via the workaround. Privacy contract was unaffected
+even before the workaround (server-side lifecycle works end-to-end and
+`internal/server/v3_disk_test.go` enforces disk-leakage absence).
 
 ## TL;DR
 
-A gnark `r1cs.R1CS` constraint system serialized via `cc.CS.WriteTo`
-on 64-bit native Go (amd64 / arm64) is not byte-equivalent to the
-same circuit serialized on 32-bit wasm32. Loading the native bytes
-into a wasm32 prover and calling `groth16.Prove` against a witness
-that satisfies the circuit produces a constraint-not-satisfied error
-mid-execution. Compiling the same circuit fresh inside wasm32 and
-proving with the same witness succeeds.
+A gnark `r1cs.R1CS` constraint system **deserialized** via `cs.ReadFrom`
+on wasm32 produces an in-memory cs that the wasm32 prover handles
+*incorrectly* for circuits using `scalarMulFakeGLV` (BabyJubJub).
+Compiling the same circuit *in process* yields a cs whose bytes are
+**byte-identical** to the deserialized one yet which proves correctly.
+Native Go (amd64 / arm64) is unaffected — its prover handles the
+deserialized cs the same as the freshly-compiled one.
 
-The bug surfaces specifically in the `scalarMulFakeGLV` hint output
-binding — the in-circuit value computed from the loaded cs+pk
-diverges from the witness's claimed ElGamal ciphertext component
-even though the same arithmetic on the same scalar in the same
-hint function on a freshly-compiled cs gives the right answer.
+So this is **not** a cross-architecture serialization bug (the bytes
+are platform-independent) — it's a wasm32-specific bug somewhere in the
+gnark prove path that depends on non-serialized in-memory state which
+is set during `frontend.Compile` but lost on `cs.ReadFrom`.
+
+The bug surfaces in the `scalarMulFakeGLV` hint output binding — the
+in-circuit computation diverges from the hint's claimed value, even
+though the same arithmetic on the same scalar in the same hint function
+on a freshly-compiled cs gives the right answer.
+
+## Workaround in production
+
+The browser prover now exposes `loadKeysFreshCS(name, pkBytes, vkBytes)`
+which **recompiles** the circuit cs in-wasm and pairs it with the
+server-supplied pk/vk. v3 circuits (`voteCastHomomorphic_8`,
+`tallyDecrypt_8`) use this path; everything else still goes through
+the cheaper `loadKeys`. Cost is one circuit compile per session
+(~50 s for `voteCastHomomorphic_8` on a modern laptop), then ~10 s
+per vote / close. See:
+
+- `cmd/prover-wasm/main.go::loadKeysFreshCS`
+- `public/prover.js::loadKeysFreshCS`
+- `public/poll.js::ensureV3Circuit` (FRESH_CS_CIRCUITS set)
+- `public/wasm_freshcs_diag.mjs` (Node-WASM repro of the workaround)
 
 ## Reproduction
 
@@ -75,76 +95,65 @@ the wasm32 deserializer.
 | JS witness shape is wrong | (C) passes with the exact JS-built witness |
 | Witness factory bug | Same `buildVoteCastHomomorphic8Assignment` runs in (A) and (C); (C) passes |
 | Byte format unstable | (D) round-trips natively, identical bytes in/out |
+| Cross-arch CBOR int width | Native and wasm32 produce **byte-identical** cs bytes for both `mint` and `voteCastHomomorphic_8` (verified via `public/v3_wasm_export_diag.mjs` + `prover/wasm_export_diag_test.go`) |
+| Wasm-side deserializer is lossy | Round-trip in wasm (`load → write`) yields byte-identical bytes (`public/wasm_roundtrip_diag.mjs`) |
 | pure-Go vs asm fr arithmetic | (E) passes with `-tags=purego`, which selects the same `element_purego.go` backend wasm uses |
 | Hint IDs differ across builds | `TestHintIDsNative` + WASM hint dump produce identical FNV-32a hashes (halfGCD=726531982, scalarMulHint=1399717548, decomposeScalar=1582912298) |
 | Hint registration missing in WASM | gnark's `init()` runs in wasm32 the same as native; verified via instrumentation |
 | Constraint count differs | Both native and WASM report 72253 constraints / 39 public / 58 secret variables for the same circuit |
+| Bug is generic to all wasm32 prove | (A) succeeds for `mint` (no scalarMulFakeGLV) on wasm32 with native bytes; only v3 circuits fail (`public/wasm_load_native_diag.mjs mint` vs `voteCastHomomorphic_8`) |
+| Bug is specific to native→wasm cross-arch | wasm-Setup keys also fail on wasm prove (`public/wasm_load_wasm_diag.mjs voteCastHomomorphic_8`) — the bug is wasm-prove vs deserialized-cs, not native-vs-wasm |
 
-## Where the bug lives (best guess)
+## Where the bug lives (current understanding)
 
-The constraint system serialization in
-`gnark@v0.14.0/constraint/marshal.go` writes:
+The original hypothesis was a CBOR int-width issue in
+`gnark@v0.14.0/constraint/marshal.go`. That hypothesis is now **ruled
+out**: `cs.WriteTo` produces byte-identical bytes on amd64 and wasm32
+for both small (`mint`) and large (`voteCastHomomorphic_8`) circuits,
+and a wasm-side `load → write` round-trip is also byte-identical. The
+deserializer faithfully reconstructs everything that's in the bytes.
 
-- A header (4 × `uint64` LE)
-- A levels block (`[]uint32` lengths + intcomp-packed uint32 deltas)
-- An instructions block (4 parallel `[]uint32` / `[]uint64` slices,
-  intcomp-packed)
-- A calldata block (`uint64` length + `binary.AppendUvarint`-encoded
-  uint32 wire indices)
-- A CBOR-serialized body (everything else — coefficients, public/
-  secret variable count, etc.)
+The remaining suspect is **non-serialized in-memory state of the cs
+that's set during `frontend.Compile` but not by `cs.ReadFrom`**, and
+which the wasm32 prover depends on while the native prover does not.
+Candidates (`cbor:"-"` in `gnark@v0.14.0/constraint/core.go`):
 
-All values are explicitly typed (`uint32`, `uint64`) — no naked
-`int` is written. The intcomp library is pure Go with no asm. CBOR
-is portable. So at first read this should be arch-independent.
+- `lbWireLevel []Level` — only used by the level-builder during
+  compile per source comments; should be irrelevant to prove.
+- `q *big.Int`, `bitLen int` — both reconstructed in
+  `CheckSerializationHeader`.
+- `genericHint BlueprintID` — unexported, defaults to 0 from
+  `NewSystem`'s implicit `AddBlueprint(&BlueprintGenericHint{})`.
 
-But: `gnark@v0.14.0/constraint/r1cs.go` and the per-curve `system.go`
-files have a number of fields stored as `int` in memory (not just
-during serialization). When a CBOR struct includes an `int` field,
-`fxamacker/cbor` writes it using the platform's int width — `int64`
-on 64-bit, `int32` on 32-bit. Reading a 64-bit-encoded int into a
-32-bit struct could either error out or silently truncate, depending
-on the value.
+A byte-level diff says nothing because the bytes match. The next
+diagnostic step would be to dump every reachable field of the
+in-memory cs after compile vs after load and find which one differs
+on wasm32.
 
-Most field values fit in 32 bits (constraint counts, wire indices),
-so truncation wouldn't trip. But CBOR's tagged-encoding scheme
-records the size of each integer, and a value that fits in `int32`
-gets a different on-wire encoding than the same value tagged as
-`int64`. The reader's struct binding might then mis-thread fields
-when the encoded sizes don't line up with what the local arch's
-struct expects.
+## Why the workaround works
 
-A targeted fix in gnark would be to mark every serialized `int` as
-`int64` (or `uint64`) explicitly, so encoding is identical regardless
-of the writer's word size.
+`loadKeysFreshCS(name, pk, vk)` calls `frontend.Compile(...)` from
+inside wasm and uses that cs object to prove. Whatever non-serialized
+state the wasm prover needs is set up by `Compile` and remains in
+memory throughout the prove call. The pk/vk supplied by the server
+match because they were produced by `groth16.Setup` against the same
+deterministic circuit definition.
 
-## Remediation options
+## Remediation options (longer term)
 
 In rough order of effort:
 
-1. **Document and live with it.** v3 close happens on a server-side
-   context, not in a voter's browser. Fine for an admin tool, awkward
-   for the "creator closes their own poll from the browser" UX.
+1. **Keep the workaround** (current state). Voters pay a one-time
+   ~50 s circuit compile per session. UX could be improved by
+   pre-compiling in a Web Worker on page load.
 
-2. **Browser-side compile + cache.** Have the WASM worker call
-   `compileCircuit('voteCastHomomorphic_8')` on first use (~2.5min)
-   and persist the resulting cs/pk/vk bytes to IndexedDB. Subsequent
-   sessions reload from IndexedDB. The catch: those keys are
-   *different* from the server's (Setup is randomized), so the
-   server's verifying key won't accept proofs against them. Either
-   the server has to *also* fetch and trust the browser-compiled vk,
-   or both sides need to agree on a canonical setup ceremony output.
+2. **Diff in-memory cs state** (next localization step). Walk every
+   reachable field on a freshly-compiled cs and a deserialized cs
+   inside wasm and report deltas. Whatever's missing is the bug.
 
-3. **Cross-compile the keystore.** Add a build step that compiles
-   v3 circuits with `GOOS=js GOARCH=wasm` and writes those bytes
-   to disk for `/api/keys` to serve. The wasm-flavored bytes
-   round-trip cleanly in wasm. Server still uses 64-bit-native bytes
-   for its own verify path. Two key directories, twice the disk,
-   but fully transparent to clients.
-
-4. **File a gnark issue and wait.** Upstream knows the codebase. If
-   they confirm the int-width hypothesis a 1-line fix in marshal.go
-   probably resolves it.
+3. **File a gnark issue / fork upstream.** Once localized, the fix
+   is likely a few lines in `cs.ReadFrom` or in the prover's wasm32
+   path.
 
 ## Reproduction artifacts in this repo
 
@@ -154,8 +163,15 @@ In rough order of effort:
 | `prover/witness_v3_dumpfile_test.go` | Native Go: replay dumped witness against a freshly compiled circuit (passes) |
 | `prover/cs_roundtrip_test.go` | Native Go: full serialize → deserialize → prove (passes) |
 | `prover/hint_ids_test.go` | Print hint IDs for cross-platform comparison |
-| `public/v3_wasm_prove_diag.mjs` | Node-WASM: replay `loadKeys` + `prove` (fails) |
+| `prover/wasm_export_diag_test.go` | Native Go: dump cs/pk/vk for any registered circuit (paired with the wasm diags) |
+| `prover/wasm_keys_native_load_test.go` | Native Go: prove + verify against wasm-Setup keys (passes for `mint`; demonstrates wasm-encoded keys round-trip cleanly into native) |
+| `public/v3_wasm_prove_diag.mjs` | Node-WASM: replay `loadKeys` + `prove` against a keystore (fails for v3) |
 | `public/v3_wasm_compile_prove_diag.mjs` | Node-WASM: bypass `loadKeys` with fresh `compileCircuit` (succeeds) |
+| `public/v3_wasm_export_diag.mjs` | Node-WASM: compile a circuit and dump cs/pk/vk bytes |
+| `public/wasm_load_native_diag.mjs` | Node-WASM: load native cs/pk/vk bytes and prove (fails for v3, passes for `mint`) |
+| `public/wasm_load_wasm_diag.mjs` | Node-WASM: load wasm-Setup cs/pk/vk bytes and prove (fails for v3 — shows it's not cross-arch) |
+| `public/wasm_roundtrip_diag.mjs` | Node-WASM: load native bytes, re-export, byte-diff (identical — deserializer is faithful) |
+| `public/wasm_freshcs_diag.mjs` | Node-WASM: the workaround — load native pk/vk, recompile cs in wasm, prove (passes) |
 
 These run independently of Playwright/CI and produce comparable
 output, so a future debugging session (or an upstream issue

@@ -43,6 +43,17 @@ onmessage = async function(e) {
         break;
       }
 
+      case 'loadKeysFreshCS': {
+        // Workaround for issue #3: gnark wasm32 prove fails on a cs read
+        // back from disk when the circuit uses scalarMulFakeGLV
+        // (BabyJubJub). Recompiling the cs in-process avoids it.
+        const { name, pkBytes, vkBytes } = payload;
+        result = bitwrapProver.loadKeysFreshCS(name, pkBytes, vkBytes);
+        if (result.error) throw new Error(result.error);
+        postMessage({ id, type: 'loadKeysFreshCS', result });
+        break;
+      }
+
       case 'loadVerifyOnly': {
         const { name, vkBytes } = payload;
         result = bitwrapProver.loadVerifyOnly(name, vkBytes);

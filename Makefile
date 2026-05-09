@@ -1,4 +1,4 @@
-.PHONY: build run test test-e2e test-playwright test-e2e-wallet validate clean wasm gen-circuits
+.PHONY: build run test test-e2e test-playwright test-e2e-wallet test-wasm-prove validate clean wasm gen-circuits
 
 PORT ?= 8088
 
@@ -42,6 +42,18 @@ gen-circuits: build
 	./bitwrap -synthesize erc020 -output prover/erc020_gen.go
 	./bitwrap -synthesize erc05725 -output prover/erc05725_gen.go
 	./bitwrap -synthesize vote -output prover/vote_gen.go
+
+# Regression check for issue #3 (gnark wasm32 + scalarMulFakeGLV bug). Builds
+# wasm + native pk/vk for the v3 vote circuit and exercises both the broken
+# loadKeys path (expected to fail) and the loadKeysFreshCS workaround
+# (expected to pass). Requires a v3 witness dump at
+# /tmp/v3-witness-dump.json — produced by `e2e/v3_dump_witness.spec.js`.
+test-wasm-prove: wasm
+	NATIVE_EXPORT_CIRCUIT=voteCastHomomorphic_8 go test -timeout 600s -run TestNativeExportKeys -v ./prover
+	@echo "--- broken path (expected fail) ---" && \
+		( node public/wasm_load_native_diag.mjs voteCastHomomorphic_8 && echo "UNEXPECTED PASS" && exit 1 ) || echo "broken path failed as expected"
+	@echo "--- workaround path (expected pass) ---" && \
+		node public/wasm_freshcs_diag.mjs voteCastHomomorphic_8
 
 clean:
 	rm -f bitwrap public/prover.wasm public/wasm_exec.js
