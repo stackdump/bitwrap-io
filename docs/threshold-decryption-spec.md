@@ -123,7 +123,7 @@ Plus domain-binding constraints to `pollId` and `coordinatorIndex`.
 - internal recombined `Ax[j]`
 
 **Constraints**
-1. Bind selected partial artifacts by hash: public inputs include `partialArtifactHash[i]` for `i in S`. These hashes are accepted only after deterministic pre-verification of each coordinator signature + `PartialDecryptCircuit_K` proof.
+1. Bind selected partial artifacts by hash: public inputs include `partialArtifactHash[i]` for `i in S`. Signature recovery and `PartialDecryptCircuit_K` verification are executed outside this circuit in a deterministic pre-verification stage; only accepted artifact hashes are admitted to the combined proof.
 2. For each bin `j`: `Ax[j] == Π_{i in S} D_i[j]^{λ_i(S)}`
 3. For each bin `j`: `B[j] == G * tallies[j] + Ax[j]`
 4. `tallies[j]` bounded (same bound policy as v3, tightened to poll max voters)
@@ -155,7 +155,7 @@ v3.1 does **not** permit a single-party master-key fallback.
 Recovery policy:
 1. **Primary window:** request partials for `T_close` duration.
 2. **Retry window:** rebroadcast + endpoint failover for `T_retry`.
-3. **Coordinator replacement / re-share:** applies only if at least `t` legacy coordinators are still available. Creator proposes a replacement set and a new committee key in a signed update artifact. The update must be co-signed by at least `t` legacy coordinators.
+3. **Coordinator replacement / re-share:** applies only if at least `t` legacy coordinators are still available. The legacy quorum runs a resharing ceremony that preserves the same decrypt secret for the current poll (new shares, same underlying secret), so existing aggregate ciphertexts remain decryptable. Creator proposes the replacement set plus resharing transcript root in a signed update artifact; it must be co-signed by at least `t` legacy coordinators.
 4. If fewer than `t` legacy coordinators are reachable, threshold cannot be safely re-shared; poll remains `close_pending`/`stalled` (explicit state), not force-decrypted.
 
 Replacement/re-share guardrails:
@@ -203,7 +203,7 @@ Replacement/re-share guardrails:
   ],
   "tallies": [0, 0, 0, 0, 0, 0, 0, 0],
   "decryptProof": "base64",
-  "circuitName": "combinedDecrypt_8_t4"
+  "circuitName": "combinedDecrypt_k8_t4"
 }
 ```
 
