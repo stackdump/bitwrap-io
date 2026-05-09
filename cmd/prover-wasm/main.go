@@ -295,6 +295,14 @@ func circuitByName(name string) frontend.Circuit {
 		return &circuits.TallyProofCircuit64{}
 	case "tallyProof_256":
 		return &circuits.TallyProofCircuit256{}
+	case "voteCastHomomorphic_8":
+		// Phase B / vote schema v3 — per-voter homomorphic ballot. ~70k
+		// constraints; first call in a session pays the compile cost.
+		return &circuits.VoteCastHomomorphicCircuit_8{}
+	case "tallyDecrypt_8":
+		// Phase B / vote schema v3 — creator's decrypt proof at close. ~40k
+		// constraints; lazy-compiled like tallyProof_256.
+		return &circuits.TallyDecryptCircuit_8{}
 	default:
 		return nil
 	}
