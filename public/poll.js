@@ -2,8 +2,9 @@
 
 import { mimcHash } from './mimc.js';
 import { MerkleTree } from './merkle.js';
-import { buildVoteCastWitness } from './witness-builder.js';
+import { buildVoteCastWitness, buildVoteCastHomomorphicWitness, HOMOMORPHIC_CHOICES } from './witness-builder.js';
 import { prove as workerProve, loadKeys, initProver } from './prover.js';
+import { SUBGROUP_ORDER as PEDERSEN_SUBGROUP_ORDER } from './pedersen.js';
 
 // Current poll context
 window.currentPollId = null;
@@ -487,6 +488,18 @@ window.castVote = async function() {
         btn.innerHTML = '<span class="spinner"></span>Building witness…';
         showVoteProgress(1);
 
+        // v3 (homomorphic-tally) branch — distinct circuit, distinct
+        // request shape, distinct backup contents. Returns early because
+        // the v1/v2 voteCommitment / publicInputs path doesn't apply.
+        if (schemaVersion === 3) {
+            await castVoteV3({
+                btn, tree, voterIdx,
+                pollId, voterSecret, voterWeight,
+                wallet,
+            });
+            return;
+        }
+
         const maxChoices = BigInt(currentPollData ? currentPollData.choices.length : 256);
         const witnessResult = buildVoteCastWitness({
             tree, voterIdx, pollId, voterSecret, voteChoice, voterWeight, maxChoices
@@ -605,6 +618,122 @@ window.castVote = async function() {
         btn.textContent = 'Cast Vote';
     }
 };
+
+// castVoteV3 runs the homomorphic-tally branch of castVote. Called by
+// window.castVote when poll.voteSchemaVersion === 3. The shape is
+// fundamentally different — voters submit K ElGamal ciphertexts plus
+// a Groth16 proof against voteCastHomomorphic_8; no voteCommitment,
+// no per-vote choice ever leaves the browser.
+async function castVoteV3({
+    btn, tree, voterIdx,
+    pollId, voterSecret, voterWeight,
+    wallet,
+}) {
+    if (!currentPollData || !currentPollData.pkCreator) {
+        throw new Error('v3 poll missing pkCreator — server may be misconfigured');
+    }
+    const pollChoices = currentPollData.choices.length;
+    if (pollChoices > HOMOMORPHIC_CHOICES) {
+        throw new Error(`v3 supports up to ${HOMOMORPHIC_CHOICES} choices, poll has ${pollChoices}`);
+    }
+    if (selectedChoice < 0 || selectedChoice >= pollChoices) {
+        throw new Error(`Selected choice ${selectedChoice} out of range`);
+    }
+
+    // Per-bin randomness from the OS CSPRNG, reduced mod the BabyJubJub
+    // prime-order subgroup. The witness builder will encrypt under
+    // pkCreator with these. Saved alongside the ciphertexts in the
+    // backup so the voter can reproduce their proof if needed.
+    const randomness = new Array(HOMOMORPHIC_CHOICES);
+    for (let j = 0; j < HOMOMORPHIC_CHOICES; j++) {
+        randomness[j] = randomScalarModSubgroup();
+    }
+
+    const witnessResult = buildVoteCastHomomorphicWitness({
+        tree, voterIdx,
+        pollId, voterSecret, voterWeight,
+        choice: selectedChoice,
+        maxChoices: pollChoices,
+        pkCreatorHex: currentPollData.pkCreator,
+        randomness,
+    });
+
+    btn.innerHTML = '<span class="spinner"></span>Generating proof…';
+    showVoteProgress(2);
+
+    // Client-side WASM proving is the only supported path for v3 —
+    // the server doesn't have a re-proving fallback because it never
+    // sees the private witness (V[K], R[K], voterSecret).
+    await initProver();
+    const proofData = await workerProve(witnessResult.circuit, witnessResult.witness);
+    if (!proofData || !proofData.proof) {
+        throw new Error('WASM prover returned no proof bytes');
+    }
+
+    btn.innerHTML = '<span class="spinner"></span>Submitting vote…';
+    showVoteProgress(3);
+
+    const voteBody = {
+        nullifier: witnessResult.witness.nullifier,
+        ciphertexts: witnessResult.ciphertextsHex,
+        proofBytes: uint8ToBase64(proofData.proof),
+    };
+    const voteResp = await fetch(`/api/polls/${currentPollId}/vote`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(voteBody),
+    });
+    if (!voteResp.ok) {
+        const text = await voteResp.text();
+        throw new Error(text);
+    }
+
+    // Backup: nullifier + ciphertexts + randomness, no plaintext choice.
+    // The voter remembers their own choice; this file lets them
+    // reconstruct their proof bytes if needed without revealing
+    // anything to anyone holding the backup file alone.
+    try {
+        downloadVoteBackup({
+            pollId: currentPollId,
+            wallet,
+            voterNonce: getOrCreateVoterNonce(currentPollId, wallet).toString(10),
+            voterSecret: witnessResult.witness.voterSecret,
+            nullifier: witnessResult.witness.nullifier,
+            ciphertexts: witnessResult.ciphertextsHex,
+            randomness: randomness.map((r) => r.toString(10)),
+            schemaVersion: 3,
+            timestamp: new Date().toISOString(),
+        });
+    } catch (e) {
+        console.warn('vote backup download failed', e);
+    }
+
+    // localStorage record — same idea as v2 but without voteChoice.
+    try {
+        const key = `bitwrap-vote-${currentPollId}-${witnessResult.witness.nullifier}`;
+        localStorage.setItem(key, JSON.stringify({
+            voterSecret: witnessResult.witness.voterSecret,
+            nullifier: witnessResult.witness.nullifier,
+            schemaVersion: 3,
+        }));
+    } catch { /* localStorage may be unavailable */ }
+
+    showMsg('Vote cast successfully! Your choice was encrypted under the creator key — no one will see it individually. A recovery backup has been downloaded.', 'success');
+    btn.style.display = 'none';
+    hideVoteProgress();
+    loadPoll(currentPollId);
+}
+
+// randomScalarModSubgroup — 32 random bytes from the OS CSPRNG,
+// interpreted big-endian and reduced mod the BabyJubJub prime-order
+// subgroup. Suitable as ElGamal encryption randomness.
+function randomScalarModSubgroup() {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    let v = 0n;
+    for (const b of bytes) v = (v << 8n) | BigInt(b);
+    return v % PEDERSEN_SUBGROUP_ORDER;
+}
 
 // ============ Close Poll ============
 
