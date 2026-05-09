@@ -154,6 +154,22 @@ func (ks *KeyStore) ExportVerifyingKey(name string) ([]byte, error) {
 	return os.ReadFile(ks.vkPath(name))
 }
 
+// ExportConstraintSystem returns the raw bytes of a circuit's compiled
+// constraint system. Used by the in-browser prover (v3 vote schema)
+// to load circuits without recompiling.
+func (ks *KeyStore) ExportConstraintSystem(name string) ([]byte, error) {
+	return os.ReadFile(ks.csPath(name))
+}
+
+// ExportProvingKey returns the raw bytes of a proving key. Large —
+// can be tens of MB for substantial circuits — so callers should
+// stream rather than buffer for production paths. Acceptable for the
+// browser prove flow because the same bytes are needed to prove at
+// all.
+func (ks *KeyStore) ExportProvingKey(name string) ([]byte, error) {
+	return os.ReadFile(ks.pkPath(name))
+}
+
 // ExportSolidityVerifier generates a Solidity verifier contract for a circuit.
 func (ks *KeyStore) ExportSolidityVerifier(name string) ([]byte, error) {
 	vk := groth16.NewVerifyingKey(ecc.BN254)

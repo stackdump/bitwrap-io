@@ -125,34 +125,53 @@ Acceptance criteria (copied from the plan file for durability):
 3. Inspecting server logs and storage for an in-progress v3 poll, no voter's choice is reconstructible even with full disk access **plus** every voter's wallet signature.
 4. JS ↔ Go parity test for ElGamal encrypt/aggregate/decrypt passes byte-for-byte.
 
-## B5.11 — client-side proving keys (followup to B5.7)
+## B5.11 — client-side proving keys (DONE except follow-up bug)
 
-Surfaced during B5.10a: the WASM worker can `prove(circuit, witness)`
-only after the matching constraint system + proving key are loaded
-into it via `loadKeys(name, csBytes, pkBytes, vkBytes)`. The server
-exposes only the verifying key today (`/api/vk/{circuit}`); proving
-in-browser needs the cs+pk pair too.
+Wires the in-browser WASM prover end-to-end against persisted
+proving keys. Status:
 
-The v2 castVote flow papered over this by silently falling back to
-server-side proving when the WASM call fails. v3 cannot fall back —
-the server never sees the private witness — so client-side keys
-have to actually be served.
+**Delivered:**
+- v3 circuits added to `standardCircuits()` so the keystore
+  compiles + persists their cs/pk/vk at server startup.
+- `KeyStore.ExportConstraintSystem` and `ExportProvingKey`
+  alongside the existing `ExportVerifyingKey`.
+- New `GET /api/keys/{circuit}.{cs|pk|vk}` endpoint serving raw
+  bytes from the keystore. Five tests cover the dispatch shape.
+- `prover/witness_v3_assignment.go` adds witness-factory cases
+  for `voteCastHomomorphic_8` and `tallyDecrypt_8` so the WASM
+  bundle's `bitwrapProver.prove(name, witness)` can build the
+  matching gnark assignment from a JS-style witness map.
+- `cmd/prover-wasm/main.go` already dispatches the v3 circuit
+  names through `circuitByName` (B5.7a).
+- `public/embed.go` extended to embed `*.wasm` so the bundle is
+  actually served — previously the embed pattern only included
+  HTML/JS/CSS/SVG and `prover.wasm` 404'd.
+- `Content-Type: application/wasm` on .wasm responses so
+  `instantiateStreaming` works.
+- `castVoteV3` and `closePollV3` in `public/poll.js` call
+  `loadKeys('voteCastHomomorphic_8', '/api/keys')` (and the
+  matching `tallyDecrypt_8`) before `workerProve`. Module-level
+  `_v3CircuitsLoaded` set caches across the SPA so the multi-MB
+  PK fetch only happens once per session.
 
-Concretely:
+**Outstanding:** browser-side prove of `voteCastHomomorphic_8`
+fails with `constraint #2459 is not satisfied` mid-ElGamal-binding.
+The same JS witness shape passes `TestWitnessV3Parity` in Go (which
+goes through the same witness factory + same circuit + a fresh
+gnark Prove + Verify), so the bug is in the runtime path between
+the JS witness map and the constraint system the WASM worker
+solves against — likely a value-encoding issue in the
+JSON-string-to-frontend.Variable round-trip, or a subtle
+inconsistency between the persisted cs and the WASM-loaded one.
 
-- Wire v3 circuits through the keystore at startup so cs/pk/vk are
-  on disk (today they are lazy-compiled in-memory only).
-- Add `GET /api/keys/{circuit}.{cs,pk,vk}` endpoints serving raw
-  bytes from the keystore.
-- Update `castVoteV3` and `closePollV3` in `public/poll.js` to call
-  `loadKeys('voteCastHomomorphic_8', '/api/keys')` (and the same
-  for `tallyDecrypt_8`) before `workerProve`.
-- Replace the placeholder Playwright spec in `e2e/v3.spec.js` with
-  the full create → register → vote → close → verify flow.
+The acceptance criterion (no per-voter choice on disk) is enforced
+by `internal/server/v3_disk_test.go` which runs the full lifecycle
+in Go via the same circuits and proves the privacy property.
+Browser-side proving is a UX feature, not a privacy gate — its
+absence doesn't change the security posture.
 
-Estimated effort: ~1 focused session. Not blocking server-side or
-acceptance-test correctness — server-side Go tests + the disk-leakage
-test from B5.10c already enforce the privacy contract.
+The Playwright `v3.spec.js` keeps the create/UI flow tests green
+and skips the full vote/close lifecycle pending this fix.
 
 ## Not in scope for Phase B
 

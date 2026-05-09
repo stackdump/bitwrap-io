@@ -4,6 +4,18 @@ import { mimcHash } from './mimc.js';
 import { MerkleTree } from './merkle.js';
 import { buildVoteCastWitness, buildVoteCastHomomorphicWitness, buildTallyDecryptWitness, HOMOMORPHIC_CHOICES } from './witness-builder.js';
 import { prove as workerProve, loadKeys, initProver } from './prover.js';
+
+// Cache of v3 circuits already loaded into the WASM worker for the
+// current session. loadKeys is idempotent server-side (re-loading the
+// same bytes overwrites the existing entry) but the multi-MB proving
+// key fetch is wasteful to repeat. Module-level — survives navigation
+// within the SPA.
+const _v3CircuitsLoaded = new Set();
+async function ensureV3Circuit(name) {
+    if (_v3CircuitsLoaded.has(name)) return;
+    await loadKeys(name, '/api/keys');
+    _v3CircuitsLoaded.add(name);
+}
 import {
     SUBGROUP_ORDER as PEDERSEN_SUBGROUP_ORDER,
     decodePointHex,
@@ -748,13 +760,18 @@ async function castVoteV3({
         randomness,
     });
 
-    btn.innerHTML = '<span class="spinner"></span>Generating proof…';
+    btn.innerHTML = '<span class="spinner"></span>Loading prover…';
     showVoteProgress(2);
 
     // Client-side WASM proving is the only supported path for v3 —
     // the server doesn't have a re-proving fallback because it never
-    // sees the private witness (V[K], R[K], voterSecret).
+    // sees the private witness (V[K], R[K], voterSecret). loadKeys
+    // pulls cs/pk/vk from the server's persisted keystore so the
+    // proof is verifiable against the same setup the server holds.
     await initProver();
+    await ensureV3Circuit('voteCastHomomorphic_8');
+
+    btn.innerHTML = '<span class="spinner"></span>Generating proof…';
     const proofData = await workerProve(witnessResult.circuit, witnessResult.witness);
     if (!proofData || !proofData.proof) {
         throw new Error('WASM prover returned no proof bytes');
@@ -941,8 +958,11 @@ async function closePollV3(btn) {
     });
     const tallies = witnessResult.tallies; // [int; K]
 
-    btn.textContent = 'Generating decrypt proof...';
+    btn.textContent = 'Loading decrypt prover...';
     await initProver();
+    await ensureV3Circuit('tallyDecrypt_8');
+
+    btn.textContent = 'Generating decrypt proof...';
     const proofData = await workerProve(witnessResult.circuit, witnessResult.witness);
     if (!proofData || !proofData.proof) {
         throw new Error('WASM prover returned no proof bytes');

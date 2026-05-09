@@ -124,6 +124,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleBundle(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/keys/"):
+		s.handleKeys(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/vk/"):
 		s.handleVK(w, r)
 	case r.URL.Path == "/api/compile" && r.Method == http.MethodPost:
@@ -220,6 +222,10 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/svg+xml")
 	case strings.HasSuffix(name, ".json"):
 		w.Header().Set("Content-Type", "application/json")
+	case strings.HasSuffix(name, ".wasm"):
+		// instantiateStreaming requires application/wasm; otherwise the
+		// browser falls back to the slower instantiate path.
+		w.Header().Set("Content-Type", "application/wasm")
 	}
 
 	w.Write(data)
@@ -673,6 +679,60 @@ func (s *Server) handleCircuits(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"circuits": circuits})
+}
+
+// handleKeys serves raw cs/pk/vk bytes for a circuit so the in-browser
+// WASM prover can `loadKeys` and prove without recompiling. The path
+// pattern is /api/keys/{circuit}.{cs|pk|vk}, matching what the
+// browser-side prover.js's loadKeys helper fetches.
+//
+// Proving keys can be tens of MB. Callers should treat this endpoint
+// as cacheable (the bytes for a given circuit name are deterministic
+// once compiled).
+func (s *Server) handleKeys(w http.ResponseWriter, r *http.Request) {
+	if s.keyStore == nil {
+		http.Error(w, "Key store not enabled (start with -key-dir flag)", http.StatusServiceUnavailable)
+		return
+	}
+	tail := strings.TrimPrefix(r.URL.Path, "/api/keys/")
+	dot := strings.LastIndex(tail, ".")
+	if dot < 0 || dot == len(tail)-1 {
+		http.Error(w, "expected /api/keys/{circuit}.{cs|pk|vk}", http.StatusBadRequest)
+		return
+	}
+	circuit := tail[:dot]
+	ext := tail[dot+1:]
+	if circuit == "" {
+		http.Error(w, "circuit name required", http.StatusBadRequest)
+		return
+	}
+	if !s.keyStore.Has(circuit) {
+		http.Error(w, fmt.Sprintf("circuit %q not found", circuit), http.StatusNotFound)
+		return
+	}
+	var (
+		bytesOut []byte
+		err      error
+	)
+	switch ext {
+	case "cs":
+		bytesOut, err = s.keyStore.ExportConstraintSystem(circuit)
+	case "pk":
+		bytesOut, err = s.keyStore.ExportProvingKey(circuit)
+	case "vk":
+		bytesOut, err = s.keyStore.ExportVerifyingKey(circuit)
+	default:
+		http.Error(w, fmt.Sprintf("unknown key extension %q (want cs|pk|vk)", ext), http.StatusBadRequest)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s.%s", circuit, ext))
+	_, _ = w.Write(bytesOut)
 }
 
 // handleVK serves verifying key data for a circuit.

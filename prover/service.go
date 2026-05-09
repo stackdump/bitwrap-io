@@ -325,6 +325,12 @@ func (f *ArcnetWitnessFactory) CreateAssignment(circuitName string, witness map[
 			PathElements: pathElems, PathIndices: pathIdx,
 		}, nil
 
+	case "voteCastHomomorphic_8":
+		return buildVoteCastHomomorphic8Assignment(witness)
+
+	case "tallyDecrypt_8":
+		return buildTallyDecrypt8Assignment(witness)
+
 	default:
 		return nil, fmt.Errorf("unknown circuit: %s", circuitName)
 	}
@@ -368,15 +374,21 @@ func NewArcnetService(keyDir string) (*Service, *KeyStore, error) {
 // standardCircuits returns the circuit definitions (without compiling them).
 func standardCircuits() map[string]frontend.Circuit {
 	return map[string]frontend.Circuit{
-		"transfer":       &TransferCircuit{},
-		"transferFrom":   &TransferFromCircuit{},
-		"mint":           &MintCircuit{},
-		"burn":           &BurnCircuit{},
-		"approve":        &ApproveCircuit{},
-		"vestClaim":      &VestingClaimCircuit{},
-		"voteCast":       &VoteCastCircuit{},
-		"tallyProof":     &TallyProofCircuit16{},
-		"tallyProof_16":  &TallyProofCircuit16{},
-		"tallyProof_64":  &TallyProofCircuit64{},
+		"transfer":              &TransferCircuit{},
+		"transferFrom":          &TransferFromCircuit{},
+		"mint":                  &MintCircuit{},
+		"burn":                  &BurnCircuit{},
+		"approve":               &ApproveCircuit{},
+		"vestClaim":             &VestingClaimCircuit{},
+		"voteCast":              &VoteCastCircuit{},
+		"tallyProof":            &TallyProofCircuit16{},
+		"tallyProof_16":         &TallyProofCircuit16{},
+		"tallyProof_64":         &TallyProofCircuit64{},
+		// v3 (homomorphic-tally) circuits. Listed here so the keystore
+		// path persists their cs/pk/vk and the in-browser prover can
+		// fetch them via /api/keys/{name}.* — without persisted keys
+		// the WASM worker can't load anything to prove against.
+		"voteCastHomomorphic_8": &VoteCastHomomorphicCircuit_8{},
+		"tallyDecrypt_8":        &TallyDecryptCircuit_8{},
 	}
 }

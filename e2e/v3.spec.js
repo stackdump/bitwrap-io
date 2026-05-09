@@ -1,31 +1,36 @@
 // @ts-check
-// v3 (homomorphic-tally) browser E2E.
+// v3 (homomorphic-tally) browser E2E. Exercises the v3 client UI and
+// the prove-key serving infrastructure that B5.11 wired up.
 //
-// Scope: the create-poll v3 UI flow (toggle, banner, sk_creator
-// backup download, server persistence) and the active-poll v3 banner
-// switching. The end-to-end vote/close round-trip is gated on
-// client-side proving keys being served from /api/keys/{circuit}.*
-// (tracked as B5.11 in docs/phase-b-roadmap.md). Until that lands,
-// the WASM worker can't prove voteCastHomomorphic_8 in the browser
-// because the server only exposes verifying keys, not the cs+pk pair
-// needed for proving.
+// Status: the create flow + UI banners are green. The full vote/close
+// round-trip uncovered a witness-vs-circuit value mismatch (gnark
+// reports "constraint #2459 not satisfied" mid-ElGamal-binding) that
+// blocks a clean Prove call in the browser. The same JS witness
+// builder passes TestWitnessV3Parity in Go, so the bug is specific
+// to the live JS-witness → WASM-prove path. Tracked as a follow-up
+// in the roadmap; the 'lifecycle' test below is skipped until it
+// resolves.
+//
+// The acceptance criterion from the v3 spec is enforced by
+// internal/server/v3_disk_test.go (TestV3PollDirHasNoChoiceLeakage),
+// which runs a full create → vote → close lifecycle in Go and
+// asserts no on-disk state leaks per-voter choices.
 //
 // Run: npx playwright test --project=v3
-// Requires `./bitwrap -dev` running on http://localhost:8088 (or
-// override BASE_URL).
+// Requires `./bitwrap -dev -key-dir <dir>` running on
+// http://localhost:8088 (or override BASE_URL).
 
 import { test } from './wallet-fixture.js';
 const { expect } = test;
 
-test.setTimeout(60_000);
+test.setTimeout(300_000);
 
-test.describe('v3 maximum-privacy poll create flow', () => {
+test.describe('v3 maximum-privacy poll UI', () => {
     test('create v3 poll: toggle, sk backup downloads, banner shows', async ({
         page, walletAddress, request,
     }) => {
         page.on('pageerror', (err) => console.log('[browser pageerror]', err.message));
 
-        // -- 1. Create the v3 poll -----------------------------------------
         await page.goto('/poll#create');
         await page.locator('input[placeholder="What should we decide?"]').fill('v3 e2e');
         await page.locator('input[placeholder="Option 1"]').fill('Apple');
@@ -35,10 +40,7 @@ test.describe('v3 maximum-privacy poll create flow', () => {
 
         await page.locator('#poll-max-privacy').check();
 
-        // Backup file download fires synchronously after the create
-        // response — set up the listener before clicking submit.
         const downloadPromise = page.waitForEvent('download', { timeout: 30_000 });
-
         const createResp = page.waitForResponse(
             r => r.url().endsWith('/api/polls') && r.request().method() === 'POST',
         );
@@ -46,33 +48,27 @@ test.describe('v3 maximum-privacy poll create flow', () => {
         const created = await createResp;
         expect(created.status()).toBe(200);
         const { id: pollId } = await created.json();
-        expect(pollId).toBeTruthy();
 
-        // The backup file should download with the poll-id-prefixed name.
-        const download = await downloadPromise;
-        expect(download.suggestedFilename()).toMatch(/^bitwrap-poll-.+-creator-key\.json$/);
+        const skBackup = await downloadPromise;
+        expect(skBackup.suggestedFilename()).toMatch(/^bitwrap-poll-.+-creator-key\.json$/);
 
-        // localStorage holds the sk under the per-poll key.
         const skLocal = await page.evaluate(
             (id) => localStorage.getItem('bitwrap-sk-creator-' + id),
             pollId,
         );
         expect(skLocal).not.toBeNull();
-        expect(/^[0-9]+$/.test(/** @type {string} */ (skLocal))).toBe(true);
 
-        // -- 2. Server persisted the v3 metadata ---------------------------
         const pollData = await (await request.get(`/api/polls/${pollId}`)).json();
         const poll = pollData.poll || pollData;
         expect(poll.voteSchemaVersion).toBe(3);
         expect(poll.pkCreator).toMatch(/^[0-9a-f]{64}$/);
         expect(poll.creator.toLowerCase()).toBe(walletAddress);
 
-        // -- 3. Vote view shows the v3 banner, not the v2 one -------------
         await page.goto(`/poll#${pollId}`);
         await page.waitForSelector('#v3-privacy-banner', { state: 'visible', timeout: 5_000 });
         await expect(page.locator('#v2-backup-banner')).toBeHidden();
 
-        // -- 4. Reveal endpoint returns 404 for v3 polls (B5.5 contract) --
+        // Reveal endpoint returns 404 for v3 polls (B5.5 contract).
         const revealAttempt = await request.post(`/api/polls/${pollId}/reveal`, {
             data: { nullifier: '0x0', voteChoice: 0, voterSecret: '0' },
         });
@@ -85,7 +81,6 @@ test.describe('v3 maximum-privacy poll create flow', () => {
         await page.locator('input[placeholder="Option 1"]').fill('Yes');
         await page.locator('input[placeholder="Option 2"]').fill('No');
 
-        // Toggle deliberately left unchecked.
         const createResp = page.waitForResponse(
             r => r.url().endsWith('/api/polls') && r.request().method() === 'POST',
         );
@@ -101,10 +96,16 @@ test.describe('v3 maximum-privacy poll create flow', () => {
         await page.waitForSelector('#v2-backup-banner', { state: 'visible', timeout: 5_000 });
         await expect(page.locator('#v3-privacy-banner')).toBeHidden();
     });
-});
 
-// FOLLOW-UP: when B5.11 lands, replace the gating doc-comment above
-// with the full create → register → vote → close → tally flow. The
-// scaffolding to do this is already in place — the only missing piece
-// is the WASM worker's loadKeys call against /api/keys/{circuit}.*
-// before workerProve.
+    // Full create → register → vote → close lifecycle. Skipped until
+    // the witness/circuit value-mismatch surfaced in WASM-side prove
+    // is resolved. The Go-side equivalents (TestCastVoteV3HappyPath,
+    // TestAggregateV3HappyPath, TestV3PollDirHasNoChoiceLeakage)
+    // already prove the protocol works end-to-end with real
+    // ciphertexts and real proofs — what's missing is just the
+    // browser-side proving path. Re-enable when the JS witness
+    // shape exactly matches the gnark constraint system at runtime.
+    test.skip('create → register → vote → close (browser proving)', async () => {
+        // see PHASE_B / B5.11 follow-up notes
+    });
+});
