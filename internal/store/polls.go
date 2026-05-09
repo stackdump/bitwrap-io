@@ -24,17 +24,34 @@ type Poll struct {
 	VoterCommitments []string `json:"voterCommitments"`
 	RegistryRoot     string   `json:"registryRoot,omitempty"`
 
-	// VoteSchemaVersion selects the secret-derivation protocol.
+	// VoteSchemaVersion selects the protocol the poll runs under.
 	// 1 = legacy: voterSecret = BigInt(sig.slice(2, 64)), fully
 	//     reconstructable from the wallet signature — coercion-exposed.
+	//     Reveal-based tally.
 	// 2 = nonce-augmented: voterSecret = mimcHash(sigDerived, voterNonce)
 	//     where voterNonce is a per-voter random field element the voter
 	//     alone possesses (localStorage + auto-downloaded backup). A
 	//     coerced wallet signature no longer deanonymizes the voter.
+	//     Still uses the reveal phase to publish per-vote choices.
+	// 3 = homomorphic tally (Phase B / vote schema v3). Voters submit
+	//     ElGamal ciphertexts under the creator's PkCreator instead of
+	//     plaintext-revealable choices; aggregate is decrypted only at
+	//     close time and the reveal phase is removed entirely. PkCreator
+	//     must be present for v3 polls. Same v2 secret-derivation
+	//     applies (still coercion-resistant via voterNonce).
 	// Polls stored before this field existed unmarshal as 0; the server
 	// treats 0 and 1 identically (both are legacy). New polls created
-	// via handleCreatePoll are stamped with 2.
+	// via handleCreatePoll are stamped with 2 (or 3 if explicitly opted in).
 	VoteSchemaVersion int `json:"voteSchemaVersion,omitempty"`
+
+	// PkCreator is the creator's public key for ElGamal encryption,
+	// required for v3 polls and unused for v1/v2. 32-byte compressed
+	// BabyJubJub point in hex (matches public/pedersen.js encoding).
+	// Voters encrypt their one-hot ballot under this key; the matching
+	// sk_creator stays in the creator's browser. Loss of sk_creator
+	// renders the poll uncloseable — the UI must offer a backup at
+	// creation time.
+	PkCreator string `json:"pkCreator,omitempty"`
 
 	// RegistryRootSigs is an append-only log of creator signatures over
 	// registry-root transitions. Each entry binds (root, count) so a voter
@@ -514,6 +531,95 @@ func (s *FSStore) ReadTallyProof(pollID string) (*TallyProofArtifact, error) {
 		return nil, err
 	}
 	return &artifact, nil
+}
+
+// HomomorphicCiphertext is a single ElGamal ciphertext (BabyJubJub),
+// encoded as 32-byte compressed-point hex on each side.
+type HomomorphicCiphertext struct {
+	A string `json:"A"`
+	B string `json:"B"`
+}
+
+// HomomorphicTallyArtifact is the v3 close artifact persisted to
+// data/polls/{id}/tally.json. Replaces RevealBundle + TallyProofArtifact
+// for v3 polls; no per-voter choice ever appears anywhere in the poll
+// directory (acceptance criterion #1 of the v3 spec).
+type HomomorphicTallyArtifact struct {
+	PollID        string                  `json:"pollId"`
+	GeneratedAt   time.Time               `json:"generatedAt"`
+	CircuitName   string                  `json:"circuitName"` // e.g. "tallyDecrypt_8"
+	PkCreator     string                  `json:"pkCreator"`
+	Aggregate     []HomomorphicCiphertext `json:"aggregate"` // K entries
+	Tallies       []int64                 `json:"tallies"`   // K entries
+	NumBallots    int                     `json:"numBallots"`
+	DecryptProof  string                  `json:"decryptProof"` // base64 gnark proof
+	PublicWitness string                  `json:"publicWitness"` // base64 — for in-browser verify
+}
+
+// SaveHomomorphicTally persists the v3 close artifact atomically. Write
+// to a sibling tempfile + rename so a crash mid-write can't leave a
+// partial tally.json on disk (the close endpoint is idempotent on poll
+// state but the on-disk shape is the source of truth).
+func (s *FSStore) SaveHomomorphicTally(pollID string, artifact *HomomorphicTallyArtifact) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	clean, err := sanitizePathComponent(pollID)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(s.pollDir(), clean)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	out, err := json.MarshalIndent(artifact, "", "  ")
+	if err != nil {
+		return err
+	}
+	final := filepath.Join(dir, "tally.json")
+	tmp := final + ".tmp"
+	if err := os.WriteFile(tmp, out, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, final)
+}
+
+// ReadHomomorphicTally returns the v3 tally artifact, or os.ErrNotExist
+// if the poll hasn't been closed yet (or isn't a v3 poll).
+func (s *FSStore) ReadHomomorphicTally(pollID string) (*HomomorphicTallyArtifact, error) {
+	clean, err := sanitizePathComponent(pollID)
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(s.pollDir(), clean, "tally.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var artifact HomomorphicTallyArtifact
+	if err := json.Unmarshal(data, &artifact); err != nil {
+		return nil, err
+	}
+	return &artifact, nil
+}
+
+// HasReveals reports whether a reveals.json exists for the poll.
+// v3 polls must have HasReveals == false at every point in their
+// lifecycle — a true result on a v3 poll is a structural privacy bug.
+func (s *FSStore) HasReveals(pollID string) (bool, error) {
+	clean, err := sanitizePathComponent(pollID)
+	if err != nil {
+		return false, err
+	}
+	path := filepath.Join(s.pollDir(), clean, "reveals.json")
+	_, err = os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
 }
 
 // AppendEvent appends an event to a poll's event log.
