@@ -140,6 +140,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleCastVote(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/polls/") && strings.HasSuffix(r.URL.Path, "/close") && r.Method == http.MethodPost:
 		s.handleClosePoll(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/polls/") && strings.HasSuffix(r.URL.Path, "/aggregate") && r.Method == http.MethodPost:
+		s.handleAggregateV3(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/polls/") && strings.HasSuffix(r.URL.Path, "/tally") && r.Method == http.MethodGet:
+		s.handleGetHomomorphicTally(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/polls/") && strings.HasSuffix(r.URL.Path, "/reveal") && r.Method == http.MethodPost:
 		s.handleRevealVote(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/polls/") && strings.HasSuffix(r.URL.Path, "/results"):
