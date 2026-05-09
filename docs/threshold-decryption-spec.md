@@ -123,7 +123,7 @@ Plus domain-binding constraints to `pollId` and `coordinatorIndex`.
 - internal recombined `Ax[j]`
 
 **Constraints**
-1. Verify each selected partial is linked to its coordinator share key (or include verified subproof commitments).
+1. Bind selected partial artifacts by hash: public inputs include `partialArtifactHash[i]` for `i in S`. These hashes are accepted only after deterministic pre-verification of each coordinator signature + `PartialDecryptCircuit_K` proof.
 2. For each bin `j`: `Ax[j] == Π_{i in S} D_i[j]^{λ_i(S)}`
 3. For each bin `j`: `B[j] == G * tallies[j] + Ax[j]`
 4. `tallies[j]` bounded (same bound policy as v3, tightened to poll max voters)
@@ -157,6 +157,11 @@ Recovery policy:
 2. **Retry window:** rebroadcast + endpoint failover for `T_retry`.
 3. **Coordinator replacement / re-share:** applies only if at least `t` legacy coordinators are still available. Creator proposes a replacement set and a new committee key in a signed update artifact. The update must be co-signed by at least `t` legacy coordinators.
 4. If fewer than `t` legacy coordinators are reachable, threshold cannot be safely re-shared; poll remains `close_pending`/`stalled` (explicit state), not force-decrypted.
+
+Replacement/re-share guardrails:
+- Cosignature verification requires **distinct** legacy coordinator indices and recovered addresses matching the original poll metadata.
+- Replacement proposals include a monotonic `rekeyEpoch`; lower/equal epochs are rejected.
+- Enforce a cooldown window (`T_rekey_cooldown`) and a bounded retry count (`MAX_REKEY_ATTEMPTS`) to prevent rapid retry grinding.
 
 ## Data structure deltas
 
@@ -212,7 +217,7 @@ Recovery policy:
 
 - **Pedersen DKG** removes dealer key-retention risk.
 - **Creator-picked coordinators** is the minimum UX change and aligns with current creation flow.
-- **`t = ceil(2n/3)`** balances Byzantine tolerance and liveness.
+- **`t = ceil(2n/3)`** is a confidentiality-first default: at least a two-thirds coalition is needed to decrypt, while close-time liveness still tolerates up to one-third coordinator unavailability.
 - **`schemaVersion: 4`** gives explicit parser/version separation for safe backward handling.
 
 ## References
