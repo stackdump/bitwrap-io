@@ -26,6 +26,19 @@ type createPollRequest struct {
 	RegistryRoot     string   `json:"registryRoot"`
 	Creator          string   `json:"creator"`   // Ethereum address (0x...)
 	Signature        string   `json:"signature"` // EIP-191 personal_sign of "bitwrap-create-poll:{title}"
+
+	// VoteSchemaVersion is the protocol version (0 or omitted defaults
+	// to 2). 3 = homomorphic-tally / ElGamal ciphertexts; requires
+	// PkCreator. See store.Poll for full semantics.
+	VoteSchemaVersion int `json:"voteSchemaVersion,omitempty"`
+
+	// PkCreator must be set for v3 polls. 32-byte compressed
+	// BabyJubJub point in hex (matches public/pedersen.js encoding).
+	// Server validates point is on-curve and in the prime-order
+	// subgroup before accepting — a malicious pk would otherwise leak
+	// sk_creator bits via small-subgroup attack on every voter's
+	// ciphertext.
+	PkCreator string `json:"pkCreator,omitempty"`
 }
 
 // castVoteRequest is the request body for POST /api/polls/{id}/vote.
@@ -129,6 +142,49 @@ func (s *Server) handleCreatePoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve schema version. 0/missing → 2 (current default for new
+	// polls). v1 cannot be requested via this endpoint — legacy polls
+	// only exist as already-saved fixtures. v3 requires PkCreator and
+	// constrains the choice count to ≤ K=8 (the per-voter circuit's
+	// fixed bin count).
+	schemaVersion := req.VoteSchemaVersion
+	switch schemaVersion {
+	case 0:
+		schemaVersion = 2
+	case 2, 3:
+		// allowed
+	default:
+		http.Error(w, "unsupported voteSchemaVersion (use 2 or 3)", http.StatusBadRequest)
+		return
+	}
+	if schemaVersion == 3 {
+		if req.PkCreator == "" {
+			http.Error(w, "pkCreator required for v3 polls", http.StatusBadRequest)
+			return
+		}
+		if len(req.Choices) > prover.VoteCastHomomorphicChoices {
+			http.Error(w, fmt.Sprintf("v3 polls support at most %d choices", prover.VoteCastHomomorphicChoices), http.StatusBadRequest)
+			return
+		}
+		pkBytes, err := hex.DecodeString(req.PkCreator)
+		if err != nil || len(pkBytes) != 32 {
+			http.Error(w, "pkCreator must be 32-byte hex", http.StatusBadRequest)
+			return
+		}
+		pk, err := prover.DecodePoint(pkBytes)
+		if err != nil {
+			http.Error(w, "pkCreator is not a valid BabyJubJub point", http.StatusBadRequest)
+			return
+		}
+		if !prover.IsInPrimeSubgroup(&pk) {
+			http.Error(w, "pkCreator is not in the prime-order subgroup", http.StatusBadRequest)
+			return
+		}
+	} else if req.PkCreator != "" {
+		http.Error(w, "pkCreator only valid for v3 polls", http.StatusBadRequest)
+		return
+	}
+
 	// Generate poll ID
 	idBytes := make([]byte, 16)
 	if _, err := rand.Read(idBytes); err != nil {
@@ -154,7 +210,8 @@ func (s *Server) handleCreatePoll(w http.ResponseWriter, r *http.Request) {
 		Status:            "active",
 		VoterCommitments:  req.VoterCommitments,
 		RegistryRoot:      req.RegistryRoot,
-		VoteSchemaVersion: 2, // coercion-resistant nonce-augmented scheme; legacy polls keep v1
+		VoteSchemaVersion: schemaVersion, // 2 = nonce-augmented; 3 = homomorphic
+		PkCreator:         req.PkCreator,
 	}
 
 	// Compute registry root from commitments if provided but root not set
