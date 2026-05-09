@@ -2,13 +2,15 @@
 // Uses the same secp256k1 implementation as public/dev-wallet.js but runs
 // entirely in-browser — no server calls for signing.
 //
-// Tests get a deterministic wallet with a known private key. Signatures are
-// real EIP-191 personal_sign that the backend's VerifySignature can recover.
+// Default key is Anvil account 0 (deterministic, suits local CI). Override
+// with `test.use({ walletPrivateKey: '0x...' })` — useful for prod tests
+// where the per-wallet rate limiter would otherwise stomp on parallel runs.
 
 import { test as base } from '@playwright/test';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { randomBytes } from 'crypto';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -23,15 +25,15 @@ const cryptoFunctions = devWalletSrc
   .replace(/^export\s+/gm, '')
   .replace(/^import\s+.*$/gm, '');
 
-// Hardcoded test private key (from Hardhat/Anvil account 0 — never used for real funds)
-const TEST_PRIVATE_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
+// Anvil account 0 — well-known test key. Default for local CI.
+const ANVIL_ACCOUNT_0 = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
 
-const walletInitScript = `
+function buildInitScript(privKeyHex) {
+  return `
 ${cryptoFunctions}
 
-// Inject window.ethereum with real signing
 (function() {
-  const PRIV_KEY = BigInt('${TEST_PRIVATE_KEY}');
+  const PRIV_KEY = BigInt('${privKeyHex}');
   const ADDRESS = getAddress(PRIV_KEY);
 
   window.ethereum = {
@@ -66,7 +68,6 @@ ${cryptoFunctions}
     removeListener() {},
   };
 
-  // Also announce via EIP-6963 so the app picks it up
   window.dispatchEvent(new CustomEvent('eip6963:announceProvider', {
     detail: {
       info: { uuid: 'test-wallet', name: 'Test Wallet', icon: '', rdns: 'io.bitwrap.test' },
@@ -75,14 +76,40 @@ ${cryptoFunctions}
   }));
 })();
 `;
+}
+
+// Generate a fresh secp256k1 private key. Use this in prod tests so each
+// run gets its own wallet identity and doesn't pile up against the
+// per-wallet rate limiter (5 polls / hour).
+export function freshPrivateKey() {
+  return '0x' + randomBytes(32).toString('hex');
+}
+
+// Build a node-side signer using the same crypto as the page-injected
+// wallet. Lets API-only tests sign without spinning up a browser.
+export function nodeWallet(privKeyHex = freshPrivateKey()) {
+  const ctx = {};
+  new Function('ctx',
+    cryptoFunctions + '\nctx.signMessage = signMessage; ctx.getAddress = getAddress;'
+  )(ctx);
+  const priv = BigInt(privKeyHex);
+  return {
+    privateKey: privKeyHex,
+    address: ctx.getAddress(priv),
+    sign: (msg) => ctx.signMessage(msg, priv),
+  };
+}
 
 export const test = base.extend({
-  context: async ({ context }, use) => {
-    await context.addInitScript({ content: walletInitScript });
+  // Override per-file or per-test via test.use({ walletPrivateKey: '0x...' }).
+  walletPrivateKey: [ANVIL_ACCOUNT_0, { option: true }],
+
+  context: async ({ context, walletPrivateKey }, use) => {
+    await context.addInitScript({ content: buildInitScript(walletPrivateKey) });
     await use(context);
   },
-  walletAddress: async ({}, use) => {
-    // Anvil account 0 — the test key in the injected script
-    await use('0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266');
+
+  walletAddress: async ({ walletPrivateKey }, use) => {
+    await use(nodeWallet(walletPrivateKey).address);
   },
 });

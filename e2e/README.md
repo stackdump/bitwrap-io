@@ -1,6 +1,6 @@
 # bitwrap-io e2e tests
 
-Two suites with different purposes.
+Three suites with different purposes.
 
 ## Fast suite
 
@@ -44,6 +44,26 @@ compatibility, and each test needs a headed browser + extension cache rebuild
 the same class of bug (proven: the modInverse fix), and has zero external
 dependencies. A manual Trust Wallet / MetaMask smoke test before release
 covers the extension-UX side.
+
+## Prod suite
+
+Runs against any deployment with no `-dev` flag. Default target is
+`https://bitwrap.io` (override with `PROD_URL=...`).
+
+```bash
+cd e2e && npm run test:prod
+```
+
+Constraints worked around:
+- No `/api/dev/sign` server endpoint — wallet flows sign via `nodeWallet()`,
+  exported from `wallet-fixture.js`, using the same secp256k1 + EIP-191
+  primitives the in-browser dev-wallet uses.
+- Per-IP rate limiter (5 polls/hr) — single worker, only one wallet test
+  creates a poll. A 429 response from `/api/polls` causes that test to
+  `test.skip()` rather than fail. Each run uses `freshPrivateKey()` so the
+  per-wallet bucket is never the bottleneck.
+- Polls created by the suite are tagged `playwright-prod ...` and expire
+  after 60 minutes. There is no delete endpoint to clean up explicitly.
 
 ## Debugging a wallet failure
 
