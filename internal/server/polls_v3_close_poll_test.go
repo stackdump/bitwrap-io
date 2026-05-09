@@ -17,7 +17,7 @@ import (
 	"github.com/stackdump/bitwrap-io/prover"
 )
 
-// TestClosePollCLIFlow exercises the full create → cast → server-side-close
+// TestClosePollCLIFlow exercises the full create -> cast -> server-side-close
 // lifecycle for a v3 poll.  It reuses the existing test helpers (seedV3Poll,
 // attachV3FullProver, castV3Vote, buildTallyDecryptProof, signAggregate) to
 // set up state, spins up a real httptest.Server, and closes the poll by
@@ -231,7 +231,7 @@ func TestClosePollSKDecrypt(t *testing.T) {
 		}
 	}
 
-	// Also verify the sk → hex → sk round-trip (the CLI parses sk from hex).
+	// Also verify the sk -> hex -> sk round-trip (the CLI parses sk from hex).
 	skHex := hex.EncodeToString(sk.Bytes())
 	skBack, ok := hexToBigInt(skHex)
 	if !ok || skBack.Cmp(sk) != 0 {

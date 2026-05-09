@@ -106,7 +106,7 @@ func TestRunClosePollMutuallyExclusiveFlags(t *testing.T) {
 // triggered purely by the absence of --signature / --eth-key.
 func TestRunClosePollPrintsPayloadWhenNoSig(t *testing.T) {
 	// Identity point (0, 1) in 32-byte little-endian encoding.
-	// On BabyJubJub: a*x^2 + y^2 = 1 + d*x^2*y^2 → at (0,1): 1 = 1 ✓
+	// On BabyJubJub: a*x^2 + y^2 = 1 + d*x^2*y^2 -> at (0,1): 1 = 1 OK
 	idBuf := make([]byte, 32)
 	idBuf[0] = 0x01
 	idHex := hex.EncodeToString(idBuf) // "01" + 62 zero hex chars
@@ -138,7 +138,7 @@ func TestRunClosePollPrintsPayloadWhenNoSig(t *testing.T) {
 	defer ts.Close()
 
 	// sk=1, pkCreator=identity: decrypt produces all-zero tallies.
-	// No signature flag → CLI must print payload and exit exitNeedsSignature.
+	// No signature flag -> CLI must print payload and exit exitNeedsSignature.
 	code := closePollCore("p3", "01", "", "", ts.URL, "", http.DefaultClient)
 	if code != exitNeedsSignature {
 		t.Errorf("no sig path: want exit %d (exitNeedsSignature), got %d", exitNeedsSignature, code)
