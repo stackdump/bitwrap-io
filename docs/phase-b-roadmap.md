@@ -156,13 +156,37 @@ proving keys. Status:
 
 **Outstanding:** browser-side prove of `voteCastHomomorphic_8`
 fails with `constraint #2459 is not satisfied` mid-ElGamal-binding.
-The same JS witness shape passes `TestWitnessV3Parity` in Go (which
-goes through the same witness factory + same circuit + a fresh
-gnark Prove + Verify), so the bug is in the runtime path between
-the JS witness map and the constraint system the WASM worker
-solves against — likely a value-encoding issue in the
-JSON-string-to-frontend.Variable round-trip, or a subtle
-inconsistency between the persisted cs and the WASM-loaded one.
+
+Localization (commit set after the initial slice):
+- The same witness passes `TestProveFromDumpedWitness` in native Go
+  (witness dumped from a real Playwright run, replayed against a
+  freshly-compiled circuit) — so the JS witness builder is correct.
+- A native `TestCSRoundTripNativeProve` that serializes cs+pk+vk to
+  bytes and reads them back round-trips cleanly — so the byte
+  format is not the issue.
+- WASM `compileCircuit` + `prove` against the same JS witness
+  succeeds — confirms the WASM gnark prove path works on a freshly
+  compiled cs.
+- WASM `loadKeys` (with bytes from native Go's `WriteTo`) + `prove`
+  against the same JS witness FAILS at constraint #2459. The
+  asserted-equal value on the right matches the witness's CtA[0].X
+  exactly, and the left value is what the in-circuit
+  scalarMulFakeGLV hint produces from G·R[0] — different output
+  for the same input.
+- Hint IDs match between native and WASM (verified with
+  `TestHintIDsNative` + WASM diagnostic dump): halfGCD=726531982,
+  scalarMulHint=1399717548, decomposeScalar=1582912298. So the
+  hint-resolution path is correct.
+- Native + `-tags=purego` (which selects the same fr arithmetic
+  backend the wasm bundle uses) round-trips correctly. So the
+  pure-Go field arithmetic isn't the issue.
+
+The bug is in the gnark cs+pk round-trip across architectures
+(64-bit native ↔ 32-bit wasm32) — likely platform-dependent
+encoding inside the constraint system bytes that the
+`internal/backend/ioutils` layer or the CBOR body produces. A
+fresh in-WASM compile yields a working cs+pk pair, but the bytes
+written by native and read by WASM diverge somewhere subtle.
 
 The acceptance criterion (no per-voter choice on disk) is enforced
 by `internal/server/v3_disk_test.go` which runs the full lifecycle

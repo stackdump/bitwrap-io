@@ -38,7 +38,7 @@ export default defineConfig({
     // `make run` or `./bitwrap -dev` — both default to prover-on).
     {
       name: 'v3',
-      testMatch: 'v3.spec.js',
+      testMatch: ['v3.spec.js', 'v3_dump_witness.spec.js'],
       use: { browserName: 'chromium', headless: true },
       timeout: 300000,
       workers: 1,
