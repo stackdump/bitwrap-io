@@ -5,6 +5,12 @@ import { MerkleTree } from './merkle.js';
 import { buildVoteCastWitness, buildVoteCastHomomorphicWitness, HOMOMORPHIC_CHOICES } from './witness-builder.js';
 import { prove as workerProve, loadKeys, initProver } from './prover.js';
 import { SUBGROUP_ORDER as PEDERSEN_SUBGROUP_ORDER } from './pedersen.js';
+import {
+    generateSkCreator,
+    derivePkCreator,
+    saveSkCreator,
+    downloadSkBackup,
+} from './sk-creator-store.js';
 
 // Current poll context
 window.currentPollId = null;
@@ -154,9 +160,43 @@ window.createPoll = async function() {
     if (!title) return showMsg('Title is required', 'error');
     if (choices.length < 2) return showMsg('At least 2 choices required', 'error');
 
+    // Read the v3 (homomorphic-tally) toggle. Element doesn't exist
+    // until B5.9 lands; gracefully default to false so this slice
+    // works against the current HTML.
+    const v3Toggle = document.getElementById('poll-max-privacy');
+    const useV3 = !!(v3Toggle && v3Toggle.checked);
+    if (useV3 && choices.length > HOMOMORPHIC_CHOICES) {
+        return showMsg(
+            `Maximum-privacy polls support up to ${HOMOMORPHIC_CHOICES} choices (this poll has ${choices.length})`,
+            'error',
+        );
+    }
+
     const btn = document.getElementById('btn-create');
     btn.disabled = true;
     btn.textContent = 'Connecting wallet...';
+
+    // sk_creator is generated *before* any network call so a creation
+    // failure can't leave the server with a pkCreator that no client
+    // possesses the matching sk for. Saved to localStorage at the same
+    // moment the backup downloads — the user has two recovery paths
+    // (browser storage + downloaded file) before the poll exists on
+    // the server.
+    let v3Sk = null;
+    let v3PkHex = null;
+    if (useV3) {
+        try {
+            v3Sk = generateSkCreator();
+            v3PkHex = derivePkCreator(v3Sk);
+        } catch (err) {
+            btn.disabled = false;
+            btn.textContent = 'Create Poll';
+            return showMsg(
+                'Failed to generate poll creator key: ' + (err.message || err),
+                'error',
+            );
+        }
+    }
 
     try {
         // Require wallet signature
@@ -179,19 +219,24 @@ window.createPoll = async function() {
         });
 
         btn.textContent = 'Creating...';
+        const body = {
+            title,
+            description,
+            choices,
+            durationMinutes: duration,
+            voterCommitments: [],
+            registryRoot: '',
+            creator,
+            signature,
+        };
+        if (useV3) {
+            body.voteSchemaVersion = 3;
+            body.pkCreator = v3PkHex;
+        }
         const resp = await fetch('/api/polls', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                title,
-                description,
-                choices,
-                durationMinutes: duration,
-                voterCommitments: [],
-                registryRoot: '',
-                creator,
-                signature,
-            })
+            body: JSON.stringify(body),
         });
 
         if (!resp.ok) {
@@ -200,7 +245,31 @@ window.createPoll = async function() {
         }
 
         const data = await resp.json();
-        showMsg('Poll created! Share this link with voters.', 'success');
+
+        // v3: persist sk + trigger backup download. Persist FIRST so a
+        // download dialog that the user dismisses still leaves a key on
+        // disk; backup is the secondary recovery path.
+        if (useV3) {
+            try {
+                saveSkCreator(data.id, v3Sk);
+            } catch (err) {
+                console.warn('saveSkCreator failed', err);
+            }
+            try {
+                downloadSkBackup(data.id, v3Sk, v3PkHex, {
+                    pollTitle: title,
+                    creator,
+                });
+            } catch (err) {
+                console.warn('sk backup download failed', err);
+            }
+            showMsg(
+                'Maximum-privacy poll created! Your creator key was saved to this browser and a backup file was downloaded. Lose both and the poll cannot be closed.',
+                'success',
+            );
+        } else {
+            showMsg('Poll created! Share this link with voters.', 'success');
+        }
 
         // Show the poll link
         const msgDiv = document.getElementById('messages');
