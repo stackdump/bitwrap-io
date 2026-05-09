@@ -15,7 +15,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/consensys/gnark-crypto/ecc"
 	tedwards "github.com/consensys/gnark-crypto/ecc/bn254/twistededwards"
+	"github.com/consensys/gnark/backend/groth16"
 	"github.com/stackdump/bitwrap-io/internal/store"
 	"github.com/stackdump/bitwrap-io/prover"
 )
@@ -327,12 +329,24 @@ func pointStrings(p *tedwards.PointAffine) (string, string) {
 
 func proofWords(t *testing.T, proof []byte, want int) []string {
 	t.Helper()
-	if len(proof) < want*32 || len(proof)%32 != 0 {
-		t.Fatalf("unexpected proof length %d", len(proof))
+	if len(proof) == 0 {
+		t.Fatal("empty proof bytes")
+	}
+	decoded := groth16.NewProof(ecc.BN254)
+	if _, err := decoded.ReadFrom(bytes.NewReader(proof)); err != nil {
+		t.Fatalf("invalid groth16 proof encoding: %v", err)
+	}
+	var raw bytes.Buffer
+	if _, err := decoded.WriteRawTo(&raw); err != nil {
+		t.Fatalf("raw proof serialization failed: %v", err)
+	}
+	rawBytes := raw.Bytes()
+	if len(rawBytes) < want*32 {
+		t.Fatalf("unexpected raw proof length %d", len(rawBytes))
 	}
 	out := make([]string, want)
 	for i := 0; i < want; i++ {
-		v := new(big.Int).SetBytes(proof[i*32 : (i+1)*32])
+		v := new(big.Int).SetBytes(rawBytes[i*32 : (i+1)*32])
 		out[i] = v.String()
 	}
 	return out
