@@ -731,6 +731,55 @@ func (s *Server) handlePollResults(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
+// handlePollVotes returns the public vote records for a poll —
+// nullifier + timestamp on every record, plus voteCommitment for
+// v1/v2 polls and ciphertexts for v3 polls. The shape is the
+// authoritative audit trail: anyone can fetch this and recompute
+// the tally (v1/v2 by reveal accumulation; v3 by homomorphic
+// aggregation + decryption against the published tally proof).
+//
+// In particular this is what the v3 creator-close flow uses to
+// fetch the ciphertext set before aggregating in the browser.
+func (s *Server) handlePollVotes(w http.ResponseWriter, r *http.Request) {
+	pollID := extractPollIDSegment(r.URL.Path, "votes")
+	if pollID == "" {
+		http.Error(w, "Poll ID required", http.StatusBadRequest)
+		return
+	}
+	poll, err := s.store.ReadPoll(pollID)
+	if err != nil {
+		http.Error(w, "Poll not found", http.StatusNotFound)
+		return
+	}
+	votes, err := s.store.ListVotes(pollID)
+	if err != nil {
+		log.Printf("ListVotes %s: %v", pollID, err)
+		http.Error(w, "Failed to read votes", http.StatusInternalServerError)
+		return
+	}
+
+	out := make([]map[string]interface{}, 0, len(votes))
+	for _, v := range votes {
+		entry := map[string]interface{}{
+			"nullifier": v.Nullifier,
+			"timestamp": v.Timestamp,
+		}
+		if poll.VoteSchemaVersion == 3 {
+			entry["ciphertexts"] = v.Ciphertexts
+		} else {
+			entry["voteCommitment"] = v.VoteCommitment
+		}
+		out = append(out, entry)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"pollId":            pollID,
+		"voteSchemaVersion": poll.VoteSchemaVersion,
+		"votes":             out,
+	})
+}
+
 // handlePollNullifiers returns the public nullifier list for audit.
 func (s *Server) handlePollNullifiers(w http.ResponseWriter, r *http.Request) {
 	pollID := extractPollIDSegment(r.URL.Path, "nullifiers")

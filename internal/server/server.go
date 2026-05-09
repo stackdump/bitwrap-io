@@ -150,6 +150,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handlePollResults(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/polls/") && strings.HasSuffix(r.URL.Path, "/nullifiers"):
 		s.handlePollNullifiers(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/polls/") && strings.HasSuffix(r.URL.Path, "/votes") && r.Method == http.MethodGet:
+		s.handlePollVotes(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/polls/") && strings.HasSuffix(r.URL.Path, "/register") && r.Method == http.MethodPost:
 		s.handleRegisterVoter(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/polls/") && strings.HasSuffix(r.URL.Path, "/registry"):
