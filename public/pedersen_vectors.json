@@ -1,0 +1,77 @@
+{
+  "curve": "BabyJubJub (gnark-crypto / iden3, a=-1)",
+  "scalarModulus": "21888242871839275222246405745257275088548364400416034343698204186575808495617",
+  "subgroupOrder": "2736030358979909402780800718157159386076813972158567259200215660948447373041",
+  "cofactor": "8",
+  "hDST": "bitwrap-h-generator-v1",
+  "G": "8b7d2d877a253c4b7733e1b91f05e0fcedf96bd11c2e572549b2a0f703727925",
+  "H": "10aa48bfd1ee96c8d8426f54882f5dd697ed2e93a714fabab022daa21027f78d",
+  "sk": "19283746501928374650192837465019283746501928",
+  "pk": "ecfb2cc4b3fbf0e95c9faa091bd2f958460b033b0842841184bf6294f5395f25",
+  "encrypts": [
+    {
+      "v": "0",
+      "r": "1",
+      "ct": {
+        "A": "8b7d2d877a253c4b7733e1b91f05e0fcedf96bd11c2e572549b2a0f703727925",
+        "B": "ecfb2cc4b3fbf0e95c9faa091bd2f958460b033b0842841184bf6294f5395f25"
+      }
+    },
+    {
+      "v": "1",
+      "r": "2",
+      "ct": {
+        "A": "53686d2b4005178e1843106f2992a867a01d8a84afbe9e8bda300abfaf6c6601",
+        "B": "83ff97deaabb6376a89be0dbf83e55a98ef589790b73ffadbf673853f0516706"
+      }
+    },
+    {
+      "v": "1",
+      "r": "31415926535897932384626433832795028841971693993751",
+      "ct": {
+        "A": "1c02a97d9eb1b28d695899d2612bb5c6456a6a0a4b38d67944d1a8ce26581484",
+        "B": "85e542cb782576f62ee33ef51143aeff27fbb78478cd33dcf98868c560af5d20"
+      }
+    },
+    {
+      "v": "0",
+      "r": "27182818284590452353602874713526624977572470936999",
+      "ct": {
+        "A": "5bcf4f0d0abbd717a6e04c35cc0929f3aa3205191be0d76e4f787da9b58a3fa5",
+        "B": "0e80d2133e5a5f16ba237ac116669c1140f1153c3b474d71b3996419f313092b"
+      }
+    }
+  ],
+  "aggregate": {
+    "inputs": [
+      {
+        "A": "81a5c1db8b9bd69385d70e7161de6e6545a1231ce1e025de3bdaf113ee60b0a9",
+        "B": "6d6b638691574a634de8f9c31ed6178d8e1f9779f0d90bd59c582d6317a1e112"
+      },
+      {
+        "A": "0f5463e031c09830252eb35ea9cb7dcaacb5206a9ea3c6b8ac7cc03f3da6c28c",
+        "B": "7072fda2c827d64ca38f9ddad01b75586c6912ce53462739e5cc50b778123e29"
+      },
+      {
+        "A": "5698a19ff22bfd85eed78a7707cf14200aff613fb64f8b6b368c720ad49e6623",
+        "B": "85d0281200219f8c4ec9a74bda8a5e4518c71e92424c1fd43acf852a9376772a"
+      },
+      {
+        "A": "71801023975c2a314a8f61f4b216dfcf9134cf1697f556690cbcb7f664907d11",
+        "B": "a4b0108263cd982bd1a44f1902fedd6b12b83aa40e87f74336c5f3d932511927"
+      }
+    ],
+    "sum": {
+      "A": "0e395cb83b724e315036f2829d619f053351bed321cadb7558de22ea10890e18",
+      "B": "5328ef54a988b6a5d5f256f5f1a46de110ad7105d38cf72cbef5c7ac2bf16c29"
+    }
+  },
+  "decrypt": {
+    "ct": {
+      "A": "0e395cb83b724e315036f2829d619f053351bed321cadb7558de22ea10890e18",
+      "B": "5328ef54a988b6a5d5f256f5f1a46de110ad7105d38cf72cbef5c7ac2bf16c29"
+    },
+    "maxTally": 4,
+    "tally": 2
+  }
+}

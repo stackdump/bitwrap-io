@@ -2,7 +2,7 @@
 
 Tracking document for the remaining work to deliver `VoteSchemaVersion = 3`: end-to-end private voting where no individual choice is ever published, and the tally is a ZK-verified decryption of an aggregate ciphertext.
 
-**Status:** design approved, not yet implemented. Phase A (issues 1–4) shipped separately — see git history for `cmd/prover-wasm`, `internal/server/tally_proof.go`, `prover/tally_gen*.go`, `public/poll.js`.
+**Status:** B1 + B2 + B3 done; B4–B5 not started. Phase A (issues 1–4) shipped separately — see git history for `cmd/prover-wasm`, `internal/server/tally_proof.go`, `prover/tally_gen*.go`, `public/poll.js`.
 
 ## Why
 
@@ -29,34 +29,39 @@ Estimated one-engineer effort: **2–4 weeks** end-to-end. Items are ordered by 
 - **Deliverable:** [`docs/homomorphic-tally-spec.md`](./homomorphic-tally-spec.md)
 - **Notes:** corrected a flaw in the original plan (publishing `R_j` leaks individual votes). Revised to ElGamal-with-aggregate-decrypt.
 
-### B2. Pedersen / ElGamal primitives — NOT STARTED
+### B2. Pedersen / ElGamal primitives — DONE
 
-**Goal:** reusable Go and JS libraries for the curve arithmetic and encryption, with byte-for-byte parity guaranteed.
+**Delivered:**
+- `prover/pedersen.go` — `PedersenG`, `PedersenH` (cached), `Encrypt`, `Aggregate`, `Decrypt` (small-range DL up to maxTally), `EncodePoint`/`DecodePoint` (32-byte gnark-crypto compressed), `Ciphertext`, `ErrTallyExceedsRange`.
+- `public/pedersen.js` — pure-bigint mirror: BN254 G1 affine arithmetic, compressed encoding (top-bit lex flags), `encrypt`/`aggregate`/`decrypt`, `setPedersenH`/`getPedersenH`.
+- `prover/pedersen_test.go` — Go correctness + `TestEmitParityVectors` (gated on `BITWRAP_EMIT_VECTORS=1`) emits `public/pedersen_vectors.json`.
+- `public/pedersen_parity_test.mjs` — asserts byte-equality on Fp/Fr, G, H, pk=G^sk, four encrypt cases, aggregate, decrypt.
+- `prover/pedersen_jsparity_test.go` — invokes `node` to run the JS parity test as part of `go test ./...`.
 
-- `prover/pedersen.go`
-  - `H` generator derived via `hash_to_curve("bitwrap-h-generator-v1")`.
-  - `Encrypt(v *big.Int, r *big.Int, pk Point) (A, B Point)`
-  - `Aggregate(cts []Ciphertext) Ciphertext`
-  - `Decrypt(ct Ciphertext, sk *big.Int, maxTally int) (int, error)` — small-range DL search.
-- `public/pedersen.js` — bigint-based mirror of the above.
-- Parity test: Go generates vectors (JSON), JS verifies byte-equality across `H`, encrypt, aggregate, decrypt.
+**Decisions made:**
+- `hash_to_curve`: gnark-crypto's RFC9380 SVDW map (`bn254.HashToG1(nil, "bitwrap-h-generator-v1")`). Pinned `H = 9feca7cde079df72328597882fe0d3c1f5674dc9273e92ed0a072667dfedf6cb`.
+- Point encoding: 32-byte compressed (gnark-crypto layout) with top-2-bit flags (`0b10` smallest-y, `0b11` largest-y, `0b01` infinity). Lex comparison uses `y > (p-1)/2`.
+- JS does not recompute hash-to-curve; H is loaded from `pedersen_vectors.json` and parity-asserted. Acceptable because H is a public deterministic constant — both sides must agree on bytes, not algorithm. Revisit if a JS-only deployment needs to derive H independently.
+- Custody (open Q2): **client-only**. `sk_creator` never leaves the browser. Documented in B5 work; no server surface for sk in B2.
+- **Curve choice corrected vs. spec.** Spec said BN254 G1, but doing G1 ops *inside* a BN254 Groth16 circuit requires non-native field emulation (~50× cost overhead). Switched to **BabyJubJub** — twisted Edwards over BN254's scalar field Fr, the standard "embedded curve" used by MACI / Semaphore / Tornado / Aztec / ZCash Sapling for exactly this reason. Constraint cost lands at ~70k for K=8 (matches the spec's 50–80k target); BN254-G1 + emulation would have been 200–500k. The protocol is otherwise unchanged. Update `docs/homomorphic-tally-spec.md` accordingly when next touched.
 
-**Open question before implementing:** pick an exact `hash_to_curve` standard. RFC9380 SSWU with domain `bitwrap-h-generator-v1` is the default; needs test vectors that both Go (`gnark-crypto/ecc/bn254`) and JS will match.
+### B3. `VoteCastHomomorphicCircuit_8` — DONE
 
-### B3. `VoteCastHomomorphicCircuit_K` — NOT STARTED
+**Delivered:**
+- `prover/vote_homomorphic_gen.go` — gnark Groth16 circuit for K=8.
+- `prover/vote_homomorphic_test.go` — 1 happy-path acceptance + 5 refusal tests (two-hot, non-boolean, out-of-range bin, forged ElGamal, bad nullifier), each verified on both Groth16 and PLONK backends. Plus a constraint-count reporting test.
+- Registered in `prover/circuits.go` as a lazy circuit (`voteCastHomomorphic_8`) — only v3 polls compile it.
 
-**Goal:** per-voter ZK proof of a well-formed encrypted ballot.
+**Constraints:** 72,253 for K=8 — within the spec's 50–80k target. Includes K=8 ElGamal binding pairs (A and B per bin) on BabyJubJub, a 4-bit MaxChoices range bound preventing votes at unused bins, depth-20 Merkle path with MiMC, and the standard nullifier mimc binding.
 
-- `prover/pedersen_vote_gen.go`
-- Public inputs: `pollId`, `registryRoot`, `nullifier`, `pkCreator`, `ciphertexts[K] = {A, B}`.
-- Private witness: one-hot vector `v[K]`, randomness `r[K]`, voter's `secret`, Merkle path.
-- Constraints:
-  1. Each `v[j] ∈ {0, 1}` (boolean).
-  2. `Σ v[j] = 1` (one-hot).
-  3. `A[j] == G^{r[j]}` and `B[j] == G^{v[j]} · pkCreator^{r[j]}` (ElGamal binding).
-  4. Merkle membership (same shape as today's `VoteCastCircuit`).
-  5. `nullifier == mimcHash(secret, pollId)`.
-- Circuit estimate: 50–80k constraints. Browser-WASM proving ~2–5s.
+**Public inputs:** `PollID`, `VoterRegistryRoot`, `Nullifier`, `MaxChoices`, `PkCreator` (BabyJubJub point), `CtA[8]`, `CtB[8]` (BabyJubJub points).
+
+**Private witness:** `VoterSecret`, `VoterWeight`, `V[8]` (one-hot), `R[8]` (randomness), `PathElements[20]`, `PathIndices[20]`.
+
+**Open follow-ups for B5 wiring:**
+- Witness builder in `public/witness-builder.js` for the JS / WASM proving path.
+- Server endpoint to accept v3 ciphertexts + proof.
+- The `_64` and `_256` size variants if larger polls land — current circuit is K=8.
 
 ### B4. `TallyDecryptCircuit_K` — NOT STARTED
 

@@ -25,15 +25,19 @@ func RegisterStandardCircuits(p *Prover) error {
 		"burn":           &BurnCircuit{},
 		"approve":        &ApproveCircuit{},
 		"vestClaim":      &VestingClaimCircuit{},
-		"voteCast":       &VoteCastCircuit{},
-		"tallyProof":     &TallyProofCircuit16{}, // legacy alias, kept for back-compat
-		"tallyProof_16":  &TallyProofCircuit16{},
-		"tallyProof_64":  &TallyProofCircuit64{},
+		"voteCast":      &VoteCastCircuit{},
+		"tallyProof":    &TallyProofCircuit16{}, // legacy alias, kept for back-compat
+		"tallyProof_16": &TallyProofCircuit16{},
+		"tallyProof_64": &TallyProofCircuit64{},
 	}
 	// tallyProof_256 is lazy: ~30-60s compile + hundreds of MB of keys.
 	// Most polls don't need it; server starts without it and pays the cost
 	// on first request from a poll that does.
 	RegisterLazyCircuit("tallyProof_256", func() frontend.Circuit { return &TallyProofCircuit256{} })
+	// voteCastHomomorphic_8 (Phase B / vote schema v3) is also lazy: only
+	// v3 polls need it, and compilation costs ~70k constraints worth of
+	// startup time. First v3 prove request pays the cost.
+	RegisterLazyCircuit("voteCastHomomorphic_8", func() frontend.Circuit { return &VoteCastHomomorphicCircuit_8{} })
 	return RegisterCircuitsParallel(p, circuits)
 }
 
