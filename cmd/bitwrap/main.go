@@ -36,6 +36,19 @@ func main() {
 	synthesize := flag.String("synthesize", "", "Synthesize gnark circuits from an ERC template (erc020|erc05725|vote) or a .btw DSL path. Writes Go source to -output (or stdout).")
 	flag.Parse()
 
+	// Handle subcommands before flag-based modes.
+	if flag.NArg() > 0 {
+		switch flag.Arg(0) {
+		case "close-poll":
+			os.Exit(runClosePoll(flag.Args()[1:]))
+		default:
+			fmt.Fprintf(os.Stderr, "unknown subcommand %q\n", flag.Arg(0))
+			fmt.Fprintf(os.Stderr, "Usage: bitwrap [flags] | bitwrap <subcommand> [flags]\n")
+			fmt.Fprintf(os.Stderr, "Subcommands: close-poll\n")
+			os.Exit(1)
+		}
+	}
+
 	if *compile != "" {
 		src, err := os.ReadFile(*compile)
 		if err != nil {

@@ -61,6 +61,25 @@ func devSign(message string) (string, string) {
 	return devSignWithKey(message, devKeys[0])
 }
 
+// SignEIP191 signs message with the provided secp256k1 private key using
+// EIP-191 personal_sign. ethPrivKeyHex must be a 32-byte hex string (with
+// or without "0x" prefix). Returns (signature hex, checksummed Ethereum
+// address, error).
+//
+// Intended for operator tools (e.g. the close-poll CLI subcommand) that
+// hold key material directly rather than delegating to a browser wallet.
+func SignEIP191(message, ethPrivKeyHex string) (sig, addr string, err error) {
+	k, ok := new(big.Int).SetString(strings.TrimPrefix(ethPrivKeyHex, "0x"), 16)
+	if !ok || k.Sign() == 0 {
+		return "", "", fmt.Errorf("invalid Ethereum private key hex")
+	}
+	s, a := devSignWithKey(message, k)
+	if s == "" || a == "" {
+		return "", "", fmt.Errorf("EIP-191 signing failed")
+	}
+	return s, a, nil
+}
+
 // devSignWithKey signs a message with the given private key using EIP-191 personal_sign.
 func devSignWithKey(message string, privKey *big.Int) (string, string) {
 	// EIP-191 prefix

@@ -32,11 +32,13 @@ type aggregateRequest struct {
 	DecryptProofBytes string  `json:"decryptProofBytes"`
 }
 
-// aggregateSigPayload returns the canonical EIP-191 message scoped to
+// AggregateSigPayload returns the canonical EIP-191 message scoped to
 // (pollID, tallies). Strict ordering: comma-joined decimals, no spaces.
 // Reusing this prefix on a different poll, or with different tallies,
 // invalidates the signature.
-func aggregateSigPayload(pollID string, tallies []int64) string {
+// This function is exported so the CLI close-poll subcommand can produce
+// a byte-identical payload without duplicating the format logic.
+func AggregateSigPayload(pollID string, tallies []int64) string {
 	parts := make([]string, len(tallies))
 	for i, t := range tallies {
 		parts[i] = strconv.FormatInt(t, 10)
@@ -121,7 +123,7 @@ func (s *Server) handleAggregateV3(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify creator signature over canonical payload.
-	sigMsg := aggregateSigPayload(pollID, req.Tallies)
+	sigMsg := AggregateSigPayload(pollID, req.Tallies)
 	if !VerifySignature(sigMsg, req.Signature, poll.Creator) {
 		http.Error(w, "only the poll creator can aggregate", http.StatusForbidden)
 		return

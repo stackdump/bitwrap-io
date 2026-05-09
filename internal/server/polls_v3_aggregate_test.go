@@ -137,7 +137,7 @@ func buildTallyDecryptProof(
 // creator (anvil dev account 0).
 func signAggregate(t *testing.T, pollID string, tallies []int64) (sig, addr string) {
 	t.Helper()
-	payload := aggregateSigPayload(pollID, tallies)
+	payload := AggregateSigPayload(pollID, tallies)
 	return testCreatorDevSign(t, payload)
 }
 
