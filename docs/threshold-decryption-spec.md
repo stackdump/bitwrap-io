@@ -62,9 +62,9 @@ For each coordinator `c_i` and bin `j`:
 
 Combiner accepts first `t` valid, unique partials and reconstructs:
 
-`A_j^x = Π_{i in S} D_{i,j}^{λ_i(S)}`
-
 Here `Π` is a group-element product (elliptic-curve point addition in exponent form), not integer multiplication.
+
+`A_j^x = Π_{i in S} D_{i,j}^{λ_i(S)}`
 
 where `S` is selected coordinator index set (`|S|=t`) and `λ_i(S)` are Lagrange coefficients at 0.
 
@@ -124,7 +124,7 @@ Plus domain-binding constraints to `pollId` and `coordinatorIndex`.
 
 **Constraints**
 1. Verify each selected partial is linked to its coordinator share key (or include verified subproof commitments).
-2. For each bin `j`: `Ax[j] == Π_i D_i[j]^{λ_i(S)}`
+2. For each bin `j`: `Ax[j] == Π_{i in S} D_i[j]^{λ_i(S)}`
 3. For each bin `j`: `B[j] == G * tallies[j] + Ax[j]`
 4. `tallies[j]` bounded (same bound policy as v3, tightened to poll max voters)
 
@@ -155,8 +155,8 @@ v3.1 does **not** permit a single-party master-key fallback.
 Recovery policy:
 1. **Primary window:** request partials for `T_close` duration.
 2. **Retry window:** rebroadcast + endpoint failover for `T_retry`.
-3. **Coordinator replacement / re-share:** if still `< t`, creator proposes replacement set and a new committee key via a signed update artifact; update must be co-signed by at least `t` existing coordinators.
-4. If threshold still cannot be re-established, poll remains `close_pending`/`stalled` (explicit state), not force-decrypted.
+3. **Coordinator replacement / re-share:** if rotation is needed and at least `t` legacy coordinators are still available, creator proposes replacement set and a new committee key via a signed update artifact; update must be co-signed by at least `t` legacy coordinators.
+4. If fewer than `t` legacy coordinators are reachable, threshold cannot be safely re-shared; poll remains `close_pending`/`stalled` (explicit state), not force-decrypted.
 
 ## Data structure deltas
 
