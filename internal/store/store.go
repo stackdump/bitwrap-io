@@ -56,6 +56,13 @@ func NewFSStore(base string) *FSStore {
 	return &FSStore{base: base}
 }
 
+// Base returns the filesystem root the store reads and writes under.
+// Mostly useful for tests that need to walk on-disk state to assert
+// invariants (e.g. "no v3 poll directory contains a per-voter
+// choice"); callers should not hand-edit files under this path while
+// the server is running.
+func (s *FSStore) Base() string { return s.base }
+
 // ObjectPath returns the path where the original JSON-LD for a CID is stored.
 func (s *FSStore) ObjectPath(cid string) string {
 	// Note: This is a public API that returns a path string
