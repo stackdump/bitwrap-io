@@ -810,6 +810,10 @@ func (s *Server) handleBundle(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Template ID required", http.StatusBadRequest)
 		return
 	}
+	if templateID == "vote-v3" {
+		s.handleBundleVoteV3(w, r)
+		return
+	}
 
 	tmpl := s.getTemplate(templateID)
 	if tmpl == nil {

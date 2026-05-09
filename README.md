@@ -58,7 +58,7 @@ Poll creation requires an EIP-191 `personal_sign` signature from MetaMask or any
 - **Visual editor** — draw places, transitions, and arcs in the browser. Models are stored as content-addressed JSON-LD.
 - **Solidity generation** — produce deployable contracts and Foundry test suites from any template.
 - **ZK circuits** — Groth16 circuits for transfer, mint, burn, approve, transferFrom, vestClaim, and voteCast, all **generated from the Petri net schema** (no hand-written gnark). One `.btw` source produces Solidity + Foundry tests + ZK circuits + witness builders.
-- **Deploy bundle** — download a complete Foundry project (`BitwrapZKPoll.sol` + `Verifier.sol` + tests + deploy script) from `GET /api/bundle/vote`.
+- **Deploy bundle** — download complete Foundry projects for v1/v2 (`GET /api/bundle/vote`) and v3 homomorphic settlement (`GET /api/bundle/vote-v3`).
 - **ERC templates** — start from ERC-20, ERC-721, ERC-1155, or a Vote template. Each is a complete Petri net with guards, arcs, and events.
 - **`.btw` DSL** — a compact schema language for defining Petri net models.
 - **Remix IDE plugin** — generate and deploy contracts inside Remix at [solver.bitwrap.io](https://solver.bitwrap.io).
@@ -90,6 +90,8 @@ POST /api/solgen             Generate Solidity from template
 POST /api/testgen            Generate Foundry tests from template
 POST /api/compile            Compile .btw DSL to schema JSON
 GET  /api/bundle/{template}  Download Foundry project (ZIP)
+                            - /api/bundle/vote: v1/v2 poll + voteCast verifier
+                            - /api/bundle/vote-v3: BitwrapZKPollV3 + voteCastHomomorphic_8 + tallyDecrypt_8 verifiers
 ```
 
 ### Operator tools
@@ -144,6 +146,12 @@ POST /api/prove                 Submit witness for proof generation
 GET  /api/vk/{circuit}          Download verifying key (binary)
 GET  /api/vk/{circuit}/solidity Download Solidity verifier contract
 ```
+
+For v3, the bundle includes generated Solidity verifiers and `BitwrapZKPollV3` wiring for close-time settlement with the aggregate artifact (`data/polls/{id}/tally.json`).
+
+## Known limitations
+
+- Exported Solidity verifiers for the current BabyJubJub-flavored v3 circuits (`voteCastHomomorphic_8`, `tallyDecrypt_8`) compile, but can reject proofs that verify successfully in Go (`groth16.Verify`). This upstream limitation is tracked in issue #6; on-chain pairing-equation parity is pending dedicated follow-up work.
 
 ## CDN
 
