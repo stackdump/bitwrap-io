@@ -29,6 +29,21 @@ export default defineConfig({
       use: { browserName: 'chromium', headless: true },
       timeout: 120000,
     },
+    // v3 (homomorphic-tally) lifecycle test. Same wallet fixture as
+    // 'wallet' but with a much longer timeout — the in-browser WASM
+    // prover compiles + runs Setup for voteCastHomomorphic_8 (~70k
+    // constraints) and tallyDecrypt_8 (~40k) on first use, so a
+    // single end-to-end run can take 90s+ even on fast hardware.
+    // Requires the bitwrap server running with prover enabled (i.e.
+    // `make run` or `./bitwrap -dev` — both default to prover-on).
+    {
+      name: 'v3',
+      testMatch: 'v3.spec.js',
+      use: { browserName: 'chromium', headless: true },
+      timeout: 300000,
+      workers: 1,
+      retries: 0,
+    },
     // Prod-targeted suite — runs against any deployment with no -dev flag.
     // Default target: https://bitwrap.io (override with PROD_URL).
     // Single worker to avoid IP rate-limit collisions; one wallet test

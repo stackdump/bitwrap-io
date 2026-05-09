@@ -125,6 +125,35 @@ Acceptance criteria (copied from the plan file for durability):
 3. Inspecting server logs and storage for an in-progress v3 poll, no voter's choice is reconstructible even with full disk access **plus** every voter's wallet signature.
 4. JS ↔ Go parity test for ElGamal encrypt/aggregate/decrypt passes byte-for-byte.
 
+## B5.11 — client-side proving keys (followup to B5.7)
+
+Surfaced during B5.10a: the WASM worker can `prove(circuit, witness)`
+only after the matching constraint system + proving key are loaded
+into it via `loadKeys(name, csBytes, pkBytes, vkBytes)`. The server
+exposes only the verifying key today (`/api/vk/{circuit}`); proving
+in-browser needs the cs+pk pair too.
+
+The v2 castVote flow papered over this by silently falling back to
+server-side proving when the WASM call fails. v3 cannot fall back —
+the server never sees the private witness — so client-side keys
+have to actually be served.
+
+Concretely:
+
+- Wire v3 circuits through the keystore at startup so cs/pk/vk are
+  on disk (today they are lazy-compiled in-memory only).
+- Add `GET /api/keys/{circuit}.{cs,pk,vk}` endpoints serving raw
+  bytes from the keystore.
+- Update `castVoteV3` and `closePollV3` in `public/poll.js` to call
+  `loadKeys('voteCastHomomorphic_8', '/api/keys')` (and the same
+  for `tallyDecrypt_8`) before `workerProve`.
+- Replace the placeholder Playwright spec in `e2e/v3.spec.js` with
+  the full create → register → vote → close → verify flow.
+
+Estimated effort: ~1 focused session. Not blocking server-side or
+acceptance-test correctness — server-side Go tests + the disk-leakage
+test from B5.10c already enforce the privacy contract.
+
 ## Not in scope for Phase B
 
 - Solidity verifier generation for the homomorphic circuits. Doable — the existing `/api/vk/{circuit}/solidity` pipeline already supports any compiled circuit — but confirm after B5 lands.
