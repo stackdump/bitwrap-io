@@ -38,6 +38,9 @@ func RegisterStandardCircuits(p *Prover) error {
 	// v3 polls need it, and compilation costs ~70k constraints worth of
 	// startup time. First v3 prove request pays the cost.
 	RegisterLazyCircuit("voteCastHomomorphic_8", func() frontend.Circuit { return &VoteCastHomomorphicCircuit_8{} })
+	// tallyDecrypt_8 (Phase B / vote schema v3, creator-side close) —
+	// also lazy. ~40k constraints; first v3 close request pays.
+	RegisterLazyCircuit("tallyDecrypt_8", func() frontend.Circuit { return &TallyDecryptCircuit_8{} })
 	return RegisterCircuitsParallel(p, circuits)
 }
 

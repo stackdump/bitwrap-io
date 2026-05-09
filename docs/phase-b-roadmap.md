@@ -2,7 +2,7 @@
 
 Tracking document for the remaining work to deliver `VoteSchemaVersion = 3`: end-to-end private voting where no individual choice is ever published, and the tally is a ZK-verified decryption of an aggregate ciphertext.
 
-**Status:** B1 + B2 + B3 done; B4–B5 not started. Phase A (issues 1–4) shipped separately — see git history for `cmd/prover-wasm`, `internal/server/tally_proof.go`, `prover/tally_gen*.go`, `public/poll.js`.
+**Status:** B1–B4 done; B5 not started. Phase A (issues 1–4) shipped separately — see git history for `cmd/prover-wasm`, `internal/server/tally_proof.go`, `prover/tally_gen*.go`, `public/poll.js`.
 
 ## Why
 
@@ -63,17 +63,23 @@ Estimated one-engineer effort: **2–4 weeks** end-to-end. Items are ordered by 
 - Server endpoint to accept v3 ciphertexts + proof.
 - The `_64` and `_256` size variants if larger polls land — current circuit is K=8.
 
-### B4. `TallyDecryptCircuit_K` — NOT STARTED
+### B4. `TallyDecryptCircuit_8` — DONE
 
-**Goal:** creator proves the decrypted tallies match the aggregate ciphertexts.
+**Delivered:**
+- `prover/tally_decrypt_gen.go` — gnark Groth16 circuit (K=8) over BabyJubJub.
+- `prover/tally_decrypt_test.go` — 1 happy-path acceptance + 3 refusal tests (wrong tally, wrong sk, oversized tally), each on Groth16 and PLONK. Plus a constraint-count reporting test.
+- Registered as a lazy circuit (`tallyDecrypt_8`) in `prover/circuits.go`.
 
-- `prover/pedersen_tally_gen.go`
-- Public inputs: `pkCreator`, aggregates `(A_j, B_j)[K]`, claimed `tallies[K]`.
-- Private witness: `skCreator`.
-- Constraints:
-  1. `pkCreator == G^{skCreator}`.
-  2. For each `j`: `B_j == G^{tally_j} · A_j^{skCreator}`.
-- Much smaller than B3 — ~10–20k constraints.
+**Constraints:** 40,958 — higher than the spec's 10–20k estimate (the spec underweighted full-width sk·A scalar mults). Still ~half of B3 and well under 1s expected proving time.
+
+**Public:** `PkCreator`, `A[8]`, `B[8]`, `Tallies[8]`. **Private:** `SkCreator`.
+
+**Constraints encoded:**
+1. `PkCreator = G · SkCreator`
+2. For each j: `B[j] = G · Tallies[j] + A[j] · SkCreator`
+3. `Tallies[j]` fits in 16 bits (range bound for on-chain verifier sanity)
+
+**Optimization opportunity (deferred):** `gnark`'s `ScalarMul` runs full Fr-width (~250 bits) regardless of the scalar's actual size. Inlining a 16-bit binary-recomposition mult for `G · Tallies[j]` would save ~2–3k constraints per bin. `DoubleBaseScalarMul` was tried and is *slower* on this curve since it also assumes full-width scalars.
 
 ### B5. v3 schema + server + client + UI — NOT STARTED
 
