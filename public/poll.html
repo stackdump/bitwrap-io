@@ -181,6 +181,19 @@
                     <option value="0">No expiration</option>
                 </select>
             </div>
+            <div class="form-group">
+                <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; padding:12px; border:1px solid var(--border); border-radius:var(--radius); background:rgba(100,149,237,0.04);">
+                    <input type="checkbox" id="poll-max-privacy" style="margin-top:3px;"/>
+                    <span style="flex:1;">
+                        <strong style="color:var(--text);">Maximum privacy (v3)</strong>
+                        <span style="display:block; font-size:0.8rem; color:var(--text-muted); margin-top:4px; line-height:1.4;">
+                            Per-voter choices are encrypted under a creator-only key and never decrypted individually &mdash; only the aggregate is. Removes the reveal phase entirely.
+                            <span style="display:block; color:#ff8844; margin-top:6px;">Requires a creator key. A backup file will download automatically &mdash; <strong>lose both browser storage and the file and the poll cannot be closed.</strong></span>
+                            <span style="display:block; margin-top:4px;">Limited to <strong>8 choices</strong>.</span>
+                        </span>
+                    </span>
+                </label>
+            </div>
             <div style="display:flex; gap:12px; margin-top:24px;">
                 <button class="btn-primary" id="btn-create" onclick="createPoll()">Create Poll</button>
                 <button class="btn-secondary" onclick="showList()">Cancel</button>
@@ -205,6 +218,9 @@
             </div>
             <div id="v2-backup-banner" style="display:none; margin-bottom:16px; padding:10px 14px; border:1px solid #6495ed; border-radius:var(--radius); background:rgba(100,149,237,0.08); font-size:0.8rem; color:#9cb7e8;">
                 <strong>Coercion-resistant poll (v2):</strong> when you cast your vote, your browser will automatically download a small backup JSON. Keep it safe &mdash; without it, a cleared browser cache means your vote cannot be revealed. The older "re-sign to recover" path has been removed so that a captured wallet signature alone can't deanonymize your vote.
+            </div>
+            <div id="v3-privacy-banner" style="display:none; margin-bottom:16px; padding:10px 14px; border:1px solid #6495ed; border-radius:var(--radius); background:rgba(100,149,237,0.08); font-size:0.8rem; color:#9cb7e8;">
+                <strong>Maximum privacy (v3):</strong> your choice is encrypted in your browser under the creator's public key and only ever decrypted in aggregate. There is no reveal phase &mdash; results appear once the creator publishes the tally. A backup file will download with your vote so you can re-prove if needed; it does not contain your choice.
             </div>
 
             <div id="vote-choices"></div>

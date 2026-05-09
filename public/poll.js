@@ -360,6 +360,13 @@ async function loadPoll(pollId) {
             regBar.style.display = 'none';
         }
 
+        const schemaVersion = poll.voteSchemaVersion || 1;
+        // Schema-version banners — only one is visible at a time.
+        const v2Banner = document.getElementById('v2-backup-banner');
+        const v3Banner = document.getElementById('v3-privacy-banner');
+        if (v2Banner) v2Banner.style.display = (schemaVersion === 2) ? 'block' : 'none';
+        if (v3Banner) v3Banner.style.display = (schemaVersion === 3) ? 'block' : 'none';
+
         if (poll.status === 'active') {
             choicesDiv.innerHTML = poll.choices.map((c, i) => `
                 <label class="choice-option" data-idx="${i}" onclick="selectChoice(this, ${i})">
@@ -369,12 +376,12 @@ async function loadPoll(pollId) {
             `).join('');
             btnVote.style.display = '';
             btnReveal.style.display = 'none';
-            // Schema-version banner: explain the backup requirement up front.
-            const banner = document.getElementById('v2-backup-banner');
-            if (banner) banner.style.display = ((poll.voteSchemaVersion || 1) >= 2) ? 'block' : 'none';
 
-            // Show close button if current wallet is the creator
+            // Show close button if current wallet is the creator. v3
+            // close button gets a different label since the action
+            // publishes tallies in one step.
             btnClose.style.display = 'none';
+            btnClose.textContent = (schemaVersion === 3) ? 'Close & Publish Tallies' : 'Close Poll';
             const provider = getWalletProvider();
             if (provider && poll.creator) {
                 provider.request({ method: 'eth_accounts' }).then(accts => {
@@ -383,19 +390,24 @@ async function loadPoll(pollId) {
                     }
                 }).catch(() => {});
             }
+        } else if (schemaVersion === 3) {
+            // v3 closed — there's no reveal phase. The tally artifact
+            // is already published; the results view renders it.
+            choicesDiv.innerHTML = '<p style="color:var(--text-muted);">This poll is closed. Tallies have been published &mdash; no per-vote reveal is needed.</p>';
+            btnVote.style.display = 'none';
+            btnClose.style.display = 'none';
+            btnReveal.style.display = 'none';
         } else {
-            // Poll closed — always show the Reveal button. If localStorage
-            // has the voterSecret we submit it directly; otherwise we fall
-            // through to a re-sign recovery flow (wallet re-signs the
-            // bitwrap-vote message; voter picks which choice they cast;
-            // server verifies mimcHash(secret, choice) == commitment).
+            // v1/v2 closed — show the Reveal button. If localStorage
+            // has the voterSecret we submit it directly; otherwise we
+            // fall through to upload-backup or re-sign recovery.
             choicesDiv.innerHTML = '<p style="color:var(--text-muted);">This poll is closed. Reveal your vote to add it to the tally.</p>';
             btnVote.style.display = 'none';
             btnClose.style.display = 'none';
             btnReveal.style.display = '';
             if (findRevealData(pollId)) {
                 btnReveal.textContent = 'Reveal My Vote';
-            } else if ((poll.voteSchemaVersion || 1) >= 2) {
+            } else if (schemaVersion >= 2) {
                 btnReveal.textContent = 'Reveal My Vote (upload backup)';
             } else {
                 btnReveal.textContent = 'Reveal My Vote (re-sign to recover)';
@@ -1231,9 +1243,17 @@ async function loadResults(pollId) {
             return;
         }
 
-        // Poll is closed — show full results
-        const tallies = data.tallies || null;
-        const talliedCount = data.talliedCount || 0;
+        // Poll is closed — show full results.
+        // v3 polls embed the full tally artifact under data.tally; v1/v2
+        // expose the per-choice tallies inline via the reveal pipeline.
+        const schemaVersion = data.voteSchemaVersion || 1;
+        const v3 = (schemaVersion === 3);
+        const tallies = v3
+            ? (data.tally && data.tally.tallies) || null
+            : (data.tallies || null);
+        const talliedCount = v3
+            ? (data.tally && data.tally.numBallots) || 0
+            : (data.talliedCount || 0);
 
         if (tallies && talliedCount > 0) {
             const maxVotes = Math.max(...tallies, 1);
@@ -1272,17 +1292,30 @@ async function loadResults(pollId) {
         }
         document.getElementById('results-total').textContent = statusText;
 
-        // Nullifiers
-        const nullifiers = data.nullifiers || [];
         const nullDiv = document.getElementById('results-nullifiers');
-        if (nullifiers.length === 0) {
-            nullDiv.textContent = 'No votes yet.';
+        if (v3) {
+            // v3 polls deliberately don't list nullifiers in the
+            // results panel — voters can hit /nullifiers directly to
+            // confirm their own ballot was counted, but the standard
+            // results view stays clean of per-voter data.
+            nullDiv.innerHTML =
+                '<div style="color:var(--text-muted); font-style:italic;">Per-vote ciphertexts available at <code>/api/polls/' +
+                esc(pollId) + '/votes</code>. The decrypt proof for these tallies is at <code>/api/polls/' +
+                esc(pollId) + '/tally</code>.</div>';
         } else {
-            nullDiv.innerHTML = nullifiers.map(n => `<div style="padding:2px 0;">${esc(n)}</div>`).join('');
+            const nullifiers = data.nullifiers || [];
+            if (nullifiers.length === 0) {
+                nullDiv.textContent = 'No votes yet.';
+            } else {
+                nullDiv.innerHTML = nullifiers.map(n => `<div style="padding:2px 0;">${esc(n)}</div>`).join('');
+            }
         }
 
-        // Tally proof section — only meaningful after close.
-        await refreshTallyProofUI(pollId, data);
+        // Tally proof section — v1/v2 only (v3 produces a different
+        // artifact under /tally that isn't compatible with this UI).
+        if (!v3) {
+            await refreshTallyProofUI(pollId, data);
+        }
     } catch (err) {
         showMsg('Failed to load results: ' + err.message, 'error');
     }
