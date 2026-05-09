@@ -35,7 +35,6 @@ type Options struct {
 	KeyDir         string // directory for persistent circuit keys (empty = no persistence)
 	DevMode        bool   // enable dev endpoints (e.g., /api/dev/sign for wallet-free testing)
 }
-
 // Server is the bitwrap HTTP server.
 type Server struct {
 	store          *store.FSStore
@@ -918,4 +917,3 @@ forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:8545 --broadcast --p
 		}
 	}
 }
-

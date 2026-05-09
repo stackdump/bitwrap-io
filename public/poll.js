@@ -560,7 +560,7 @@ window.castVote = async function() {
             voterSecret = deriveVoterSecret(schemaVersion, currentPollId, wallet, randomFieldElement());
         }
 
-        const pollId = BigInt('0x' + currentPollId.slice(0, 16));
+        const pollId = pollIdFieldElement(currentPollId, schemaVersion);
         const voteChoice = BigInt(selectedChoice);
         const voterWeight = 1n;
 
@@ -840,6 +840,16 @@ function randomScalarModSubgroup() {
     let v = 0n;
     for (const b of bytes) v = (v << 8n) | BigInt(b);
     return v % PEDERSEN_SUBGROUP_ORDER;
+}
+
+function pollIdFieldElement(pollId, schemaVersion) {
+    if (schemaVersion === 3) {
+        const bytes = new TextEncoder().encode(pollId);
+        let n = 0n;
+        for (const b of bytes) n = (n << 8n) | BigInt(b);
+        return n;
+    }
+    return BigInt('0x' + pollId.slice(0, 16));
 }
 
 // ============ Close Poll ============
