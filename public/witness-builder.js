@@ -3,6 +3,18 @@
 
 import { mimcHash } from './mimc.js';
 import { MerkleTree } from './merkle.js';
+import {
+  G as PEDERSEN_G,
+  encrypt as pedersenEncrypt,
+  encodePointHex,
+  decodePointHex,
+  scalarMulBase,
+  scalarMul,
+  pointAdd,
+  pointNeg,
+  ZERO as PEDERSEN_ZERO,
+  SUBGROUP_ORDER,
+} from './pedersen.js';
 
 // Format a BigInt as a decimal string for Go's ParseWitnessField
 function fieldStr(v) {
@@ -223,6 +235,204 @@ export function buildVoteCastWitness({ tree, voterIdx, pollId, voterSecret, vote
       ...flattenProof(proof, 20),
     }
   };
+}
+
+// Bin count for the v3 (homomorphic) per-voter circuit. Must stay in
+// lockstep with prover.VoteCastHomomorphicChoices on the Go side.
+export const HOMOMORPHIC_CHOICES = 8;
+
+// Tree depth for the homomorphic voter registry (matches voteCast).
+const HOMOMORPHIC_DEPTH = 20;
+
+// buildVoteCastHomomorphicWitness — assembles a v3 (homomorphic-tally)
+// per-voter circuit assignment. Returns:
+//   {
+//     circuit: 'voteCastHomomorphic_8',
+//     witness: { ... flat decimal-string fields ready for the WASM prover ... },
+//     nullifier:        BigInt (mimc(secret, pollId)),
+//     ciphertextsHex:   [{ A: hex, B: hex }, ...]   // K entries; what to send to /vote
+//   }
+//
+// Inputs:
+//   tree         — MerkleTree of voter commitments (depth 20).
+//   voterIdx     — voter's leaf index in `tree`.
+//   pollId       — BigInt poll id.
+//   voterSecret  — BigInt; coercion-resistant derivation lives in poll.js.
+//   voterWeight  — BigInt; usually 1.
+//   choice       — int in [0, maxChoices).
+//   maxChoices   — int in [1, HOMOMORPHIC_CHOICES].
+//   pkCreatorHex — 32-byte compressed BabyJubJub hex.
+//   randomness   — optional [BigInt; K]; if omitted, derived deterministically
+//                  from (voterSecret, pollId, j) via mimcHash so the same
+//                  voter resubmitting produces identical ciphertexts (avoids
+//                  accidental nullifier reuse with different ciphertexts,
+//                  which would still be rejected by the server but is
+//                  noisy in logs). Production callers SHOULD pass real
+//                  randomness — see poll.js.
+//
+// The circuit's range bound (V[j] = 0 for j ≥ maxChoices) is enforced
+// by `probe = V[j] · (maxChoices − (j+1))` decomposing to 4 bits, so
+// callers must place the one-hot 1 at index `choice` in [0, maxChoices).
+export function buildVoteCastHomomorphicWitness({
+  tree, voterIdx,
+  pollId, voterSecret, voterWeight,
+  choice, maxChoices,
+  pkCreatorHex,
+  randomness,
+}) {
+  pollId = BigInt(pollId);
+  voterSecret = BigInt(voterSecret);
+  voterWeight = BigInt(voterWeight);
+
+  if (!Number.isInteger(choice) || choice < 0 || choice >= maxChoices) {
+    throw new Error(`buildVoteCastHomomorphicWitness: choice=${choice} not in [0, ${maxChoices})`);
+  }
+  if (!Number.isInteger(maxChoices) || maxChoices < 1 || maxChoices > HOMOMORPHIC_CHOICES) {
+    throw new Error(`buildVoteCastHomomorphicWitness: maxChoices=${maxChoices} not in [1, ${HOMOMORPHIC_CHOICES}]`);
+  }
+
+  const pk = decodePointHex(pkCreatorHex);
+
+  const voterRegistryRoot = tree.root;
+  const proof = tree.getProof(voterIdx);
+
+  const nullifier = mimcHash(voterSecret, pollId);
+
+  // Build one-hot V and per-bin randomness R.
+  const V = new Array(HOMOMORPHIC_CHOICES).fill(0n);
+  V[choice] = 1n;
+
+  const R = new Array(HOMOMORPHIC_CHOICES);
+  for (let j = 0; j < HOMOMORPHIC_CHOICES; j++) {
+    if (randomness && randomness[j] !== undefined) {
+      R[j] = BigInt(randomness[j]);
+    } else {
+      // Deterministic but per-voter-per-poll-per-bin. mimc is a field
+      // function so the result is in Fr; reduce mod ℓ for the curve.
+      const r = mimcHash(mimcHash(voterSecret, pollId), BigInt(j));
+      R[j] = ((r % SUBGROUP_ORDER) + SUBGROUP_ORDER) % SUBGROUP_ORDER;
+    }
+  }
+
+  // Encrypt each bin under pkCreator.
+  const ciphertexts = R.map((r, j) => pedersenEncrypt(V[j], r, pk));
+  const ciphertextsHex = ciphertexts.map((ct) => ({
+    A: encodePointHex(ct.A),
+    B: encodePointHex(ct.B),
+  }));
+
+  // Flat witness for the WASM prover. Points are split into X / Y
+  // decimal strings; the gnark witness layout consumes them in field
+  // declaration order.
+  const witness = {
+    pollId: fieldStr(pollId),
+    voterRegistryRoot: fieldStr(voterRegistryRoot),
+    nullifier: fieldStr(nullifier),
+    maxChoices: fieldStr(BigInt(maxChoices)),
+
+    'pkCreator.X': fieldStr(pk.x),
+    'pkCreator.Y': fieldStr(pk.y),
+
+    voterSecret: fieldStr(voterSecret),
+    voterWeight: fieldStr(voterWeight),
+  };
+  for (let j = 0; j < HOMOMORPHIC_CHOICES; j++) {
+    witness[`V${j}`] = fieldStr(V[j]);
+    witness[`R${j}`] = fieldStr(R[j]);
+    witness[`CtA${j}.X`] = fieldStr(ciphertexts[j].A.x);
+    witness[`CtA${j}.Y`] = fieldStr(ciphertexts[j].A.y);
+    witness[`CtB${j}.X`] = fieldStr(ciphertexts[j].B.x);
+    witness[`CtB${j}.Y`] = fieldStr(ciphertexts[j].B.y);
+  }
+  for (let i = 0; i < HOMOMORPHIC_DEPTH; i++) {
+    witness[`pathElement${i}`] = fieldStr(proof.pathElements[i]);
+    witness[`pathIndex${i}`] = fieldStr(BigInt(proof.pathIndices[i]));
+  }
+
+  return {
+    circuit: 'voteCastHomomorphic_8',
+    witness,
+    nullifier,
+    ciphertextsHex,
+  };
+}
+
+// buildTallyDecryptWitness — creator's decrypt-proof witness for v3
+// poll close. Returns { circuit, witness, tallies } where `tallies`
+// is the recovered per-bin plaintext (also bound into the proof's
+// public inputs).
+//
+// Inputs:
+//   skCreator        — BigInt (the creator's private key; never sent to server).
+//   aggregatesHex    — [{A: hex, B: hex}; K] from GET /api/polls/{id}/votes
+//                      (or from local re-aggregation of the public ciphertexts).
+//   tallies          — optional [BigInt|int; K]. If omitted, derived by
+//                      decrypting each bin under skCreator with maxTally
+//                      defaulting to 65535.
+export function buildTallyDecryptWitness({
+  skCreator,
+  aggregatesHex,
+  tallies,
+  maxTally = 65535,
+}) {
+  skCreator = BigInt(skCreator);
+  if (aggregatesHex.length !== HOMOMORPHIC_CHOICES) {
+    throw new Error(`expected ${HOMOMORPHIC_CHOICES} aggregates, got ${aggregatesHex.length}`);
+  }
+
+  const pk = scalarMulBase(skCreator);
+
+  const aggregates = aggregatesHex.map((c) => ({
+    A: decodePointHex(c.A),
+    B: decodePointHex(c.B),
+  }));
+
+  let recovered;
+  if (tallies && tallies.length === HOMOMORPHIC_CHOICES) {
+    recovered = tallies.map((t) => BigInt(t));
+  } else {
+    recovered = aggregates.map((ct) => decryptToBigInt(ct, skCreator, maxTally));
+  }
+
+  // Range check mirroring the circuit's 16-bit bound.
+  for (let j = 0; j < recovered.length; j++) {
+    if (recovered[j] < 0n || recovered[j] > 0xffffn) {
+      throw new Error(`tally[${j}] = ${recovered[j]} out of [0, 65535]`);
+    }
+  }
+
+  const witness = {
+    'pkCreator.X': fieldStr(pk.x),
+    'pkCreator.Y': fieldStr(pk.y),
+    skCreator: fieldStr(skCreator),
+  };
+  for (let j = 0; j < HOMOMORPHIC_CHOICES; j++) {
+    witness[`A${j}.X`] = fieldStr(aggregates[j].A.x);
+    witness[`A${j}.Y`] = fieldStr(aggregates[j].A.y);
+    witness[`B${j}.X`] = fieldStr(aggregates[j].B.x);
+    witness[`B${j}.Y`] = fieldStr(aggregates[j].B.y);
+    witness[`Tallies${j}`] = fieldStr(recovered[j]);
+  }
+
+  return {
+    circuit: 'tallyDecrypt_8',
+    witness,
+    tallies: recovered.map((t) => Number(t)),
+  };
+}
+
+// decryptToBigInt — small-range DL search returning BigInt. Throws if
+// the aggregate doesn't decrypt within [0, maxTally].
+function decryptToBigInt(ct, sk, maxTally) {
+  const skA = scalarMul(sk, ct.A);
+  const M = pointAdd(ct.B, pointNeg(skA));
+  if (M.x === PEDERSEN_ZERO.x && M.y === PEDERSEN_ZERO.y) return 0n;
+  let probe = PEDERSEN_ZERO;
+  for (let t = 1; t <= maxTally; t++) {
+    probe = pointAdd(probe, PEDERSEN_G);
+    if (probe.x === M.x && probe.y === M.y) return BigInt(t);
+  }
+  throw new Error(`decryptToBigInt: tally exceeds maxTally=${maxTally}`);
 }
 
 // Build a vesting claim witness
