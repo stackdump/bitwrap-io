@@ -1,0 +1,257 @@
+# Threshold Decryption Protocol (v3.1 / schema v4)
+
+Status: design (not yet implemented). Extends [`docs/homomorphic-tally-spec.md`](./homomorphic-tally-spec.md) by replacing single-creator tally decryption with coordinator threshold decryption.
+
+## Goal
+
+Remove the v3.0 single-key trust point: compromise of one creator key must no longer retroactively decrypt all ballots.
+
+## Decisions (resolved)
+
+1. **Key generation ceremony:** **Pedersen DKG (t-of-n)** instead of trusted-dealer Shamir secret sharing.
+2. **Coordinator selection model:** **creator-picked coordinator set** at poll creation for v3.1.
+3. **Threshold defaults:** parameterized, default **n=5, t=4** (`t = ceil(2n/3)`) as a confidentiality-first setting; lower `t` increases availability but weakens confidentiality.
+4. **Circuits:** add **`PartialDecryptCircuit_K`** and **`CombinedDecryptCircuit_K_t`**.
+5. **Liveness:** no creator-master-key fallback; use retry windows + coordinator replacement/re-share protocol.
+6. **Coordinator identity/signing:** coordinator partial artifacts are signed with **EIP-191** (`personal_sign`) over canonical JSON payload hash.
+7. **Backwards compatibility:** threshold polls use **`schemaVersion: 4`**.
+
+---
+
+## Compatibility and scope
+
+- v1/v2/v3 poll behavior is unchanged.
+- v4 keeps the same aggregate-close request shape (`POST /api/polls/{id}/aggregate`), but decryption artifacts differ.
+- This spec covers off-chain threshold tally decryption and proof publication only.
+
+## Threat model
+
+- Adversary may compromise some coordinators and/or the server.
+- Privacy must hold unless at least `t` decryption shares are compromised.
+- Coordinator unavailability is expected; protocol must tolerate up to `n - t` offline coordinators.
+
+## Protocol overview
+
+### 1) Poll creation (v4)
+
+Creator chooses:
+- `choices = K`
+- coordinator set `C = {c_1..c_n}`
+- threshold `t` (default derived from `n`)
+
+Creation artifact includes:
+- `schemaVersion: 4`
+- `threshold: { n, t }`
+- `coordinators: [{ address, encPubKey, signingPubKey, endpoint }]`
+- DKG transcript commitment root and resulting committee encryption public key `pk_committee`
+
+DKG variant for v3.1 is Pedersen VSS + complaint rounds in the style of **Gennaro–Jarecki–Krawczyk–Rabin (GJKR, 1999)** (robust DKG without a trusted dealer). Do not use bare Pedersen 1991 transcripts without the bias-resistant fixes from robust DKG variants.
+
+Voters encrypt exactly as v3, except under `pk_committee` instead of `pk_creator`.
+
+### 2) Vote casting and aggregation
+
+Unchanged from v3 at API shape level:
+- per-vote ciphertext vectors
+- bin-wise aggregate ciphertexts `(A_j, B_j)`
+
+### 3) Threshold decryption at close
+
+For each coordinator `c_i` and bin `j`:
+- compute partial decryption share `D_{i,j} = A_j^{s_i}`
+- generate proof `π_i` (via `PartialDecryptCircuit_K`) that all `D_{i,*}` are consistent with coordinator public share `Y_i = G^{s_i}`
+- sign partial artifact with EIP-191
+
+Encrypted coordinator-share transport in DKG/resharing uses:
+- ephemeral secp256k1 ECDH between sender and recipient encryption keys
+- HKDF-SHA256 key derivation over the shared secret
+- AES-256-GCM for authenticated encryption with associated data `{pollId, rekeyEpoch, senderIndex, recipientIndex}`
+
+Combiner accepts first `t` valid, unique partials and reconstructs:
+
+Here `Π` is a group-element product (elliptic-curve point addition in exponent form), not integer multiplication.
+
+`A_j^x = Π_{i in S} D_{i,j}^{λ_i(S)}`
+
+where `S` is selected coordinator index set (`|S|=t`) and `λ_i(S)` are Lagrange coefficients at 0.
+
+Then:
+
+`M_j = B_j / A_j^x = G^{tally_j}`
+
+Recover `tally_j` by bounded discrete log (`0..N_voters`) as in v3.
+
+### 4) Final proof + publication
+
+Publish tally artifact with:
+- aggregate ciphertexts
+- selected coordinator IDs
+- accepted partial artifacts
+- final decrypt proof `Π_final` from `CombinedDecryptCircuit_K_t`
+- tallies
+
+`CombinedDecryptCircuit_K_t` proves:
+1. selected partial points are consistent with selected coordinator share keys
+2. recombination from selected partials yields `A_j^x`
+3. `B_j = G^{tally_j} * A_j^x` for all bins
+4. tallies are range-bounded
+
+Coordinator signatures and standalone `PartialDecryptCircuit_K` proofs are verified in deterministic pre-validation before building the combined witness.
+
+## Circuit sketches
+
+### `PartialDecryptCircuit_K`
+
+**Public inputs**
+- `A[0..K-1]`
+- `D_i[0..K-1]`
+- `Y_i`
+- `pollId`
+- `coordinatorIndex`
+
+**Private witness**
+- `s_i`
+
+**Constraints (per bin `j`)**
+1. `Y_i == G * s_i`
+2. `D_i[j] == A[j] * s_i`
+
+Plus domain-binding constraints to `pollId` and `coordinatorIndex`.
+
+### `CombinedDecryptCircuit_K_t`
+
+**Public inputs**
+- `A[0..K-1]`, `B[0..K-1]`
+- `tallies[0..K-1]`
+- selected coordinator indices `S`
+- selected public share keys `Y_i`
+- selected partial points `D_i[j]`
+
+**Private witness**
+- Lagrange coefficients `λ_i(S)`
+- internal recombined `Ax[j]`
+
+**Constraints**
+1. For each selected coordinator `i`, enforce partial/share consistency directly: `Y_i == G * s_i` and `D_i[j] == A[j] * s_i` for all `j` (where each `s_i` is private witness material from that coordinator package).
+2. For each bin `j`: `Ax[j] == Π_{i in S} D_i[j]^{λ_i(S)}`
+3. For each bin `j`: `B[j] == G * tallies[j] + Ax[j]`
+4. Lagrange-coefficient correctness for the selected set `S`: enforce interpolation identities `Σ_{i in S} λ_i = 1` and `Σ_{i in S} λ_i * idx(i)^k = 0` for `k = 1..t-1` (indices interpreted as field elements).
+5. `tallies[j]` bounded (same bound policy as v3, tightened to poll max voters)
+
+## Coordinator signing format
+
+Each coordinator signs the hash of canonical JSON:
+
+```json
+{
+  "type": "bitwrap.threshold.partial.v1",
+  "pollId": "...",
+  "schemaVersion": 4,
+  "coordinatorIndex": 2,
+  "coordinatorAddress": "0x...",
+  "rekeyEpoch": 0,
+  "aggregateHash": "0x...",
+  "partialDecryptProofHash": "0x...",
+  "timestamp": 1730000000
+}
+```
+
+- Signature algorithm: EIP-191 (`personal_sign`) over `keccak256(canonical_payload_bytes)`.
+- Verifier checks recovered address equals announced coordinator address.
+- Verifier checks `rekeyEpoch` equals the poll's active epoch to prevent replay across resharing events.
+
+## Liveness and recovery
+
+v3.1 does **not** permit a single-party master-key fallback.
+
+Recovery policy:
+1. **Primary window:** request partials for `T_close` duration.
+2. **Retry window:** rebroadcast + endpoint failover for `T_retry`.
+3. **Coordinator replacement / re-share:** applies only if at least `t` legacy coordinators are still available. The legacy quorum runs a resharing ceremony that preserves the same decrypt secret for the current poll (new shares, same underlying secret), so existing aggregate ciphertexts remain decryptable. Creator proposes the replacement set plus resharing transcript root in a signed update artifact; it must be co-signed by at least `t` legacy coordinators.
+4. If fewer than `t` legacy coordinators are reachable, threshold cannot be safely re-shared; poll remains `close_pending`/`stalled` (explicit state), not force-decrypted.
+
+Replacement/re-share guardrails:
+- Cosignature verification requires **distinct** legacy coordinator indices and recovered addresses matching the original poll metadata.
+- Replacement proposals include a monotonic `rekeyEpoch`; lower/equal epochs are rejected.
+- Enforce a cooldown window (`T_rekey_cooldown`) and a bounded retry count (`MAX_REKEY_ATTEMPTS`) to prevent rapid retry grinding.
+
+Minimal resharing flow (same-secret refresh):
+1. Select live legacy signer set `L` with `|L| >= t`.
+2. Each `i in L` samples random refresh polynomial `f_i(x)` with `f_i(0)=0` and degree `t-1`, broadcasts commitments.
+3. For each target coordinator index `k`, each `i` sends encrypted refresh share `f_i(k)`.
+4. Share update rule:
+   - if `k` is an existing coordinator, `s'_k = s_k + Σ_i f_i(k)`
+   - if `k` is a newly added coordinator, `s'_k = Σ_i f_i(k)` derived entirely from legacy quorum contributions
+   In both cases the shared secret at `x=0` is unchanged.
+5. Publish resharing transcript root; old shares are retired for the active `rekeyEpoch`.
+
+DKG/resharing transcript commitment scheme:
+- Canonicalize each transcript message to deterministic JSON.
+- Leaf hash: `h_leaf = keccak256(domain || pollId || rekeyEpoch || round || senderIndex || recipientIndex || payloadHash)`.
+- Commitment: binary Merkle root over ordered leaves (`dkgTranscriptRoot`).
+- Verifiers recompute root and reject if any required round/participant message is missing.
+
+## Data structure deltas
+
+### Poll metadata (`schemaVersion: 4`)
+
+```json
+{
+  "schemaVersion": 4,
+  "threshold": { "n": 5, "t": 4 },
+  "coordinators": [
+    {
+      "index": 1,
+      "address": "0x...",
+      "encPubKey": "0x...",
+      "signingPubKey": "0x...",
+      "endpoint": "https://..."
+    }
+  ],
+  "pkCommittee": "0x...",
+  "dkgTranscriptRoot": "0x..."
+}
+```
+
+### Tally artifact (`schemaVersion: 4`)
+
+```json
+{
+  "pollId": "...",
+  "schemaVersion": 4,
+  "aggregate": [{ "A": "0x...", "B": "0x..." }],
+  "selectedCoordinators": [1, 2, 4, 5],
+  "partials": [
+    {
+      "coordinatorIndex": 1,
+      "partial": [{ "D": "0x..." }],
+      "proof": "base64",
+      "signature": "0x..."
+    }
+  ],
+  "tallies": [0, 0, 0, 0, 0, 0, 0, 0],
+  "decryptProof": "base64",
+  "circuitName": "combinedDecrypt_k8_t4"
+}
+```
+
+## Migration
+
+- v3 polls continue and close under v3 single-key rules.
+- v4 polls require threshold metadata and coordinator workflow.
+- No in-place upgrade for active polls.
+
+## Rationale summary
+
+- **Pedersen DKG** removes dealer key-retention risk.
+- **Creator-picked coordinators** is the minimum UX change and aligns with current creation flow.
+- **`t = ceil(2n/3)`** is a confidentiality-first default. Example: with `n=5`, this yields `t=4` (a 4-of-5 threshold). Dial: raise `t` for stronger confidentiality, lower `t` for stronger close-time availability.
+- **`schemaVersion: 4`** gives explicit parser/version separation for safe backward handling.
+
+## References
+
+- `docs/homomorphic-tally-spec.md`
+- Torben Pryds Pedersen, *A Threshold Cryptosystem without a Trusted Party* (EUROCRYPT 1991)
+- Rosario Gennaro, Stanislaw Jarecki, Hugo Krawczyk, Tal Rabin, *Secure Distributed Key Generation for Discrete-Log Based Cryptosystems* (EUROCRYPT 1999)
+- Helios 3.0 protocol documentation
+- MACI v1 threshold decryption design notes
