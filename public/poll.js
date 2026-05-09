@@ -2,14 +2,23 @@
 
 import { mimcHash } from './mimc.js';
 import { MerkleTree } from './merkle.js';
-import { buildVoteCastWitness, buildVoteCastHomomorphicWitness, HOMOMORPHIC_CHOICES } from './witness-builder.js';
+import { buildVoteCastWitness, buildVoteCastHomomorphicWitness, buildTallyDecryptWitness, HOMOMORPHIC_CHOICES } from './witness-builder.js';
 import { prove as workerProve, loadKeys, initProver } from './prover.js';
-import { SUBGROUP_ORDER as PEDERSEN_SUBGROUP_ORDER } from './pedersen.js';
+import {
+    SUBGROUP_ORDER as PEDERSEN_SUBGROUP_ORDER,
+    decodePointHex,
+    encodePointHex,
+    pointAdd,
+    ZERO as PEDERSEN_ZERO,
+} from './pedersen.js';
 import {
     generateSkCreator,
     derivePkCreator,
     saveSkCreator,
+    loadSkCreator,
+    clearSkCreator,
     downloadSkBackup,
+    parseSkBackupText,
 } from './sk-creator-store.js';
 
 // Current poll context
@@ -812,8 +821,26 @@ window.closePoll = async function() {
 
     const btn = document.getElementById('btn-close');
     btn.disabled = true;
-    btn.textContent = 'Signing...';
 
+    // v3 (homomorphic-tally) close is a fundamentally different flow:
+    // aggregate ciphertexts client-side, decrypt under sk_creator,
+    // generate a Groth16 decrypt-proof, sign a canonical aggregate
+    // payload, POST to /aggregate. Branch early so the v1/v2 code
+    // path stays untouched.
+    const schemaVersion = (currentPollData && currentPollData.voteSchemaVersion) || 1;
+    if (schemaVersion === 3) {
+        try {
+            await closePollV3(btn);
+        } catch (err) {
+            showMsg('Close failed: ' + walletError(err, 'closePollV3'), 'error');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Close & Publish Tallies';
+        }
+        return;
+    }
+
+    btn.textContent = 'Signing...';
     try {
         const accounts = await provider.request({ method: 'eth_requestAccounts' });
         const creator = accounts[0];
@@ -841,6 +868,172 @@ window.closePoll = async function() {
         btn.textContent = 'Close Poll';
     }
 };
+
+// closePollV3 runs the homomorphic-tally close path. Caller is
+// window.closePoll (above) which handles button state and outer
+// error display.
+//
+// Steps:
+//   1. Recover sk_creator from localStorage, or prompt for the
+//      backup file.
+//   2. GET /api/polls/{id}/votes → list of per-voter ciphertexts.
+//   3. Aggregate per-bin in the browser (server will repeat the
+//      same aggregation but having a local copy means we can
+//      decrypt under sk_creator without round-tripping).
+//   4. Build the tallyDecrypt_8 witness (decrypts in the process)
+//      and WASM-prove.
+//   5. Sign the canonical aggregate-tally payload with the wallet.
+//   6. POST {creator, signature, tallies, decryptProofBytes} to
+//      /api/polls/{id}/aggregate.
+async function closePollV3(btn) {
+    btn.textContent = 'Loading creator key...';
+    let sk = loadSkCreator(currentPollId);
+    if (sk === null) {
+        sk = await promptForSkBackup();
+        if (sk === null) {
+            // User cancelled; show a short hint and bail.
+            throw new Error('creator key not found in this browser; restore from backup file to close');
+        }
+        // Re-save so next time the close button doesn't re-prompt.
+        try { saveSkCreator(currentPollId, sk); } catch { /* localStorage may be unavailable */ }
+    }
+
+    // Server expects a pkCreator that matches G·sk; cross-check
+    // before doing any expensive work.
+    const computedPk = derivePkCreator(sk);
+    if (currentPollData && currentPollData.pkCreator
+        && currentPollData.pkCreator.toLowerCase() !== computedPk.toLowerCase()) {
+        throw new Error(
+            'creator key does not match this poll (pk mismatch). Did you upload the wrong backup?',
+        );
+    }
+
+    btn.textContent = 'Fetching votes...';
+    const votesResp = await fetch(`/api/polls/${currentPollId}/votes`);
+    if (!votesResp.ok) throw new Error('failed to fetch votes: ' + (await votesResp.text()));
+    const votesData = await votesResp.json();
+    const votes = votesData.votes || [];
+    if (votes.length === 0) {
+        throw new Error('no votes have been cast — nothing to aggregate');
+    }
+
+    btn.textContent = `Aggregating ${votes.length} ciphertexts...`;
+    const aggregatesHex = aggregateCiphertextsHex(votes);
+
+    btn.textContent = 'Decrypting tallies...';
+    const witnessResult = buildTallyDecryptWitness({
+        skCreator: sk,
+        aggregatesHex,
+        // tallies omitted ⇒ buildTallyDecryptWitness decrypts each bin.
+        maxTally: votes.length,
+    });
+    const tallies = witnessResult.tallies; // [int; K]
+
+    btn.textContent = 'Generating decrypt proof...';
+    await initProver();
+    const proofData = await workerProve(witnessResult.circuit, witnessResult.witness);
+    if (!proofData || !proofData.proof) {
+        throw new Error('WASM prover returned no proof bytes');
+    }
+
+    btn.textContent = 'Sign to publish tallies...';
+    const provider = getWalletProvider();
+    const accounts = await provider.request({ method: 'eth_requestAccounts' });
+    const creator = accounts[0];
+    const sigMsg = aggregateSigPayload(currentPollId, tallies);
+    const signature = await provider.request({
+        method: 'personal_sign',
+        params: [sigMsg, creator],
+    });
+
+    btn.textContent = 'Publishing tallies...';
+    const resp = await fetch(`/api/polls/${currentPollId}/aggregate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            creator,
+            signature,
+            tallies,
+            decryptProofBytes: uint8ToBase64(proofData.proof),
+        }),
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+
+    // sk_creator is no longer needed — clear from localStorage so a
+    // compromised browser session post-close can't decrypt anything
+    // (though the plaintext tally is now public anyway, a hygienic
+    // clear is the right default).
+    try { clearSkCreator(currentPollId); } catch { /* */ }
+
+    showMsg(
+        'Poll closed and tallies published. The decrypt proof is verifiable on this device — no one trusts the server.',
+        'success',
+    );
+    loadPoll(currentPollId);
+}
+
+// aggregateCiphertextsHex sums per-voter ciphertexts component-wise
+// across bins, returning [{A: hex, B: hex}; K]. Mirrors the server's
+// homomorphic-aggregate step (which it re-runs at close time too —
+// having a local copy lets us decrypt without an extra round trip).
+function aggregateCiphertextsHex(votes) {
+    const aggA = new Array(HOMOMORPHIC_CHOICES).fill(PEDERSEN_ZERO);
+    const aggB = new Array(HOMOMORPHIC_CHOICES).fill(PEDERSEN_ZERO);
+    for (const v of votes) {
+        if (!v.ciphertexts || v.ciphertexts.length !== HOMOMORPHIC_CHOICES) {
+            throw new Error(`vote with malformed ciphertext list (got ${v.ciphertexts ? v.ciphertexts.length : 0}, want ${HOMOMORPHIC_CHOICES})`);
+        }
+        for (let j = 0; j < HOMOMORPHIC_CHOICES; j++) {
+            const a = decodePointHex(v.ciphertexts[j].A);
+            const b = decodePointHex(v.ciphertexts[j].B);
+            aggA[j] = pointAdd(aggA[j], a);
+            aggB[j] = pointAdd(aggB[j], b);
+        }
+    }
+    const out = [];
+    for (let j = 0; j < HOMOMORPHIC_CHOICES; j++) {
+        out.push({
+            A: encodePointHex(aggA[j]),
+            B: encodePointHex(aggB[j]),
+        });
+    }
+    return out;
+}
+
+// aggregateSigPayload mirrors internal/server/polls_v3_aggregate.go's
+// canonical close-message format: bitwrap-aggregate-tally:{pollID}:{tallies}
+// with strict comma-joined decimal tallies and no spaces. Drift here
+// breaks signature verification on the server.
+function aggregateSigPayload(pollId, tallies) {
+    return 'bitwrap-aggregate-tally:' + pollId + ':' + tallies.map(String).join(',');
+}
+
+// promptForSkBackup opens a file-picker, parses the uploaded backup,
+// and returns the BigInt sk. Resolves to null if the user cancels.
+function promptForSkBackup() {
+    return new Promise((resolve, reject) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'application/json,.json';
+        input.onchange = async () => {
+            const file = input.files && input.files[0];
+            if (!file) return resolve(null);
+            try {
+                const text = await file.text();
+                const parsed = parseSkBackupText(text);
+                if (parsed.pollId !== currentPollId) {
+                    return reject(new Error(
+                        `backup is for poll ${parsed.pollId.slice(0, 12)}…, not this poll`,
+                    ));
+                }
+                resolve(parsed.sk);
+            } catch (e) {
+                reject(e);
+            }
+        };
+        input.click();
+    });
+}
 
 // ============ Reveal Vote ============
 
