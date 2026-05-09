@@ -16,6 +16,37 @@ async function ensureV3Circuit(name) {
     await loadKeys(name, '/api/keys');
     _v3CircuitsLoaded.add(name);
 }
+
+async function proveV3WithFallback(circuit, witness) {
+    try {
+        await initProver();
+        await ensureV3Circuit(circuit);
+        const proofData = await workerProve(circuit, witness);
+        if (!proofData || !proofData.proof) {
+            throw new Error('WASM prover returned no proof bytes');
+        }
+        return proofData;
+    } catch (e) {
+        console.warn('v3 client-side proving failed, falling back to server /api/prove-bytes:', e);
+        const resp = await fetch('/api/prove-bytes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ circuit, witness }),
+        });
+        if (!resp.ok) {
+            const text = await resp.text();
+            throw new Error('Proof generation failed: ' + text);
+        }
+        const body = await resp.json();
+        if (!body.proofBytes) {
+            throw new Error('Server fallback returned no proofBytes');
+        }
+        return {
+            proof: base64ToBytes(body.proofBytes),
+            publicWitness: body.publicWitnessBytes ? base64ToBytes(body.publicWitnessBytes) : null,
+        };
+    }
+}
 import {
     SUBGROUP_ORDER as PEDERSEN_SUBGROUP_ORDER,
     decodePointHex,
@@ -560,7 +591,7 @@ window.castVote = async function() {
             voterSecret = deriveVoterSecret(schemaVersion, currentPollId, wallet, randomFieldElement());
         }
 
-        const pollId = BigInt('0x' + currentPollId.slice(0, 16));
+        const pollId = pollIdFieldElement(currentPollId, schemaVersion);
         const voteChoice = BigInt(selectedChoice);
         const voterWeight = 1n;
 
@@ -768,14 +799,8 @@ async function castVoteV3({
     // sees the private witness (V[K], R[K], voterSecret). loadKeys
     // pulls cs/pk/vk from the server's persisted keystore so the
     // proof is verifiable against the same setup the server holds.
-    await initProver();
-    await ensureV3Circuit('voteCastHomomorphic_8');
-
     btn.innerHTML = '<span class="spinner"></span>Generating proof…';
-    const proofData = await workerProve(witnessResult.circuit, witnessResult.witness);
-    if (!proofData || !proofData.proof) {
-        throw new Error('WASM prover returned no proof bytes');
-    }
+    const proofData = await proveV3WithFallback(witnessResult.circuit, witnessResult.witness);
 
     btn.innerHTML = '<span class="spinner"></span>Submitting vote…';
     showVoteProgress(3);
@@ -840,6 +865,16 @@ function randomScalarModSubgroup() {
     let v = 0n;
     for (const b of bytes) v = (v << 8n) | BigInt(b);
     return v % PEDERSEN_SUBGROUP_ORDER;
+}
+
+function pollIdFieldElement(pollId, schemaVersion) {
+    if (schemaVersion === 3) {
+        const bytes = new TextEncoder().encode(pollId);
+        let n = 0n;
+        for (const b of bytes) n = (n << 8n) | BigInt(b);
+        return n;
+    }
+    return BigInt('0x' + pollId.slice(0, 16));
 }
 
 // ============ Close Poll ============
@@ -959,14 +994,8 @@ async function closePollV3(btn) {
     const tallies = witnessResult.tallies; // [int; K]
 
     btn.textContent = 'Loading decrypt prover...';
-    await initProver();
-    await ensureV3Circuit('tallyDecrypt_8');
-
     btn.textContent = 'Generating decrypt proof...';
-    const proofData = await workerProve(witnessResult.circuit, witnessResult.witness);
-    if (!proofData || !proofData.proof) {
-        throw new Error('WASM prover returned no proof bytes');
-    }
+    const proofData = await proveV3WithFallback(witnessResult.circuit, witnessResult.witness);
 
     btn.textContent = 'Sign to publish tallies...';
     const provider = getWalletProvider();

@@ -9,6 +9,7 @@ package server
 
 import (
 	"archive/zip"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -116,6 +117,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleGenesisGen(w, r)
 	case r.URL.Path == "/api/prove" && r.Method == http.MethodPost:
 		s.handleProve(w, r)
+	case r.URL.Path == "/api/prove-bytes" && r.Method == http.MethodPost:
+		s.handleProveBytes(w, r)
 	case r.URL.Path == "/api/circuits":
 		s.handleCircuits(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/bundle/"):
@@ -632,6 +635,74 @@ func (s *Server) handleProve(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleProveBytes generates a proof and returns gnark wire-format bytes
+// (base64) so browser clients can submit proofBytes directly to v3 poll
+// endpoints when local WASM proving is unavailable.
+func (s *Server) handleProveBytes(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Circuit string            `json:"circuit"`
+		Witness map[string]string `json:"witness"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	if req.Circuit == "" {
+		http.Error(w, "circuit field required", http.StatusBadRequest)
+		return
+	}
+	if len(req.Witness) == 0 {
+		http.Error(w, "witness field required (map of field name to value)", http.StatusBadRequest)
+		return
+	}
+	if s.proverSvc == nil {
+		http.Error(w, "ZK prover is disabled (server started with -no-prover)", http.StatusServiceUnavailable)
+		return
+	}
+	p := s.proverSvc.Prover()
+	if _, ok := p.GetCircuit(req.Circuit); !ok {
+		http.Error(w, fmt.Sprintf("Unknown circuit: %s. Available: %v", req.Circuit, p.ListCircuits()), http.StatusBadRequest)
+		return
+	}
+
+	factory := &prover.ArcnetWitnessFactory{}
+	assignment, err := factory.CreateAssignment(req.Circuit, req.Witness)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":   fmt.Sprintf("witness error: %v", err),
+			"circuit": req.Circuit,
+		})
+		return
+	}
+
+	start := time.Now()
+	artifact, err := prover.ProveTally(p, req.Circuit, assignment)
+	elapsed := time.Since(start)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":         fmt.Sprintf("proof generation failed: %v", err),
+			"circuit":       req.Circuit,
+			"proof_time_ms": elapsed.Milliseconds(),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"circuit":            req.Circuit,
+		"proofBytes":         base64.StdEncoding.EncodeToString(artifact.ProofBytes),
+		"publicWitnessBytes": base64.StdEncoding.EncodeToString(artifact.PublicWitnessBytes),
+		"publicInputs":       artifact.PublicInputs,
+		"proof_time_ms":      elapsed.Milliseconds(),
+	})
+}
+
 // circuitDescriptions provides human-readable descriptions for known circuits.
 var circuitDescriptions = map[string]struct {
 	description  string
@@ -918,4 +989,3 @@ forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:8545 --broadcast --p
 		}
 	}
 }
-

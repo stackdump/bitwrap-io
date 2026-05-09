@@ -223,6 +223,18 @@ func TestProveDisabled(t *testing.T) {
 	}
 }
 
+func TestProveBytesDisabled(t *testing.T) {
+	srv := testServer(t) // prover not enabled
+	body := `{"circuit":"transfer","witness":{"x":"1"}}`
+	req := httptest.NewRequest("POST", "/api/prove-bytes", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != 503 {
+		t.Fatalf("POST /api/prove-bytes with disabled prover = %d, want 503: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestProveUnknownCircuit(t *testing.T) {
 	srv := testServer(t) // prover not enabled
 	body := `{"circuit":"unknown","witness":{"x":"1"}}`
@@ -239,6 +251,18 @@ func TestProveMissingWitness(t *testing.T) {
 	srv := testServer(t)
 	body := `{"circuit":"transfer"}`
 	req := httptest.NewRequest("POST", "/api/prove", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != 400 {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestProveBytesMissingWitness(t *testing.T) {
+	srv := testServer(t)
+	body := `{"circuit":"transfer"}`
+	req := httptest.NewRequest("POST", "/api/prove-bytes", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, req)
