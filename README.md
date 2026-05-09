@@ -92,7 +92,51 @@ POST /api/compile            Compile .btw DSL to schema JSON
 GET  /api/bundle/{template}  Download Foundry project (ZIP)
 ```
 
-### ZK prover
+### Operator tools
+
+```
+POST /api/polls/{id}/aggregate  Close a v3 poll (signed aggregate proof required)
+GET  /api/polls/{id}/tally      Download the tally artifact (post-close)
+```
+
+A v3 poll can also be closed from the command line by a server operator who has
+the creator's BabyJubJub secret key (`--sk-hex`) and their Ethereum private key
+(`--eth-key`) or a pre-computed EIP-191 signature (`--signature`):
+
+```sh
+# Step 1: compute tallies and print the payload that needs to be signed
+bitwrap close-poll <pollId> \
+    --sk-hex=<creatorBabyJubJubSecretKeyHex> \
+    --server=https://bitwrap.io
+
+# Step 2: re-run with the signature once you have it
+bitwrap close-poll <pollId> \
+    --sk-hex=<hex> \
+    --signature=<eip191sig> \
+    --server=https://bitwrap.io
+
+# Or: sign internally with an Ethereum private key (single step)
+bitwrap close-poll <pollId> \
+    --sk-hex=<hex> \
+    --eth-key=<ethPrivKeyHex> \
+    --server=https://bitwrap.io
+
+# Optional: cache the compiled tallyDecrypt_8 circuit for fast restarts
+bitwrap close-poll <pollId> --sk-hex=<hex> --eth-key=<hex> \
+    --key-dir=./keys --server=https://bitwrap.io
+```
+
+The subcommand:
+1. Fetches `/api/polls/{id}/votes` — the list of per-bin aggregate ciphertexts.
+2. Aggregates the ciphertexts across all ballots.
+3. Decrypts each bin with `--sk-hex` to recover the tally vector.
+4. Compiles `tallyDecrypt_8` locally and runs `groth16.Prove` (Go-side — no WASM).
+5. POSTs `{creator, signature, tallies, decryptProofBytes}` to `/api/polls/{id}/aggregate`.
+
+v1/v2 polls are rejected with an informative error. This is the recommended path
+until browser-side close lands.
+
+
 
 ```
 GET  /api/circuits              List available circuits
@@ -126,6 +170,7 @@ Single Go binary. Vanilla JS frontend. No npm, no React, no build step.
 
 ```
 cmd/bitwrap/       Entry point (flags: -port, -data, -compile, -synthesize, -validate)
+                   Subcommands: close-poll
 dsl/               .btw lexer, parser, AST, builder
 erc/               ERC token standard templates (020, 721, 1155, 4626, 5725, vote)
 prover/            Groth16 prover service + generated circuits (prover/*_gen.go)
