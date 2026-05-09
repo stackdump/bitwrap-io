@@ -1,100 +1,114 @@
-# gnark `vk.ExportSolidity` emits a no-commitment verifier for circuits that produce commitment-bearing proofs
+# Postmortem: v3 Solidity verifier "ProofInvalid()" failures
 
-**Status:** open. Localized but not fixed. Affects every Groth16 circuit in this repo.
-**Surfaced:** Phase B / B5.10c (issue #6 originally).
-**Impact:** Auto-exported Solidity verifiers reject valid proofs. On-chain settlement of bitwrap polls — v1, v2, *and* v3 — is currently broken end-to-end via the auto-export path. The `solidity/testgen.go` test harness papers over this with a `MockVerifier` that always returns `true`.
+**Status:** **fixed** in commit landing this doc. Originally tracked as #6.
+**Real root cause:** public-input ordering mismatch in
+`bundle_v3.go` and `v3_verifier_solidity_test.go` — both fed the
+ciphertext `(A, B)` pairs to the verifier interleaved per-index when
+gnark's circuit declaration walks them as sequential `CtA[0..7]` then
+`CtB[0..7]` blocks.
 
-## TL;DR
+This document is preserved as a postmortem because the original
+diagnosis (committed as commit `a803e3b`, attached to issue #6) had
+the wrong root cause and pointed at gnark's commitment-scheme
+machinery. Future-you should not chase that thread again.
 
-gnark's Groth16 proof writer adds commitment-scheme data (1 G1 commitment + 1 G1 commitmentPok = 64 bytes + a 4-byte length prefix = 68 extra bytes, taking proofs from 256 to 324 raw bytes) for any circuit that uses `api.Compiler().NewHint`. That includes `api.ToBinary`, which is required by any real ECC scalar mul, which means **every circuit in this repo emits 324-byte proofs**.
+## What actually happened
 
-Meanwhile, gnark's `vk.ExportSolidity` template gates commitment-aware code paths on `{{- if gt $numCommitments 0 }}` — and for these circuits `numCommitments` is reported as 0, so the emitted Solidity verifier has only `verifyProof(uint256[8] proof, uint256[N] input)` with no slot for commitment data. The verifier's pairing equation can't account for the commitment, so it rejects every proof with `ProofInvalid()`.
+`internal/server/bundle_v3.go::verifyTallyDecryptProof` built the
+input array as:
 
-The mismatch isn't between v1/v2 and v3 — it's between gnark's proof writer and gnark's verifier exporter, and it affects everything.
+```solidity
+for (uint256 i = 0; i < 8; i++) {
+    Ciphertext memory ct = aggregateCiphertexts[i];
+    input[idx++] = ct.ax;  // A[i].x
+    input[idx++] = ct.ay;  // A[i].y
+    input[idx++] = ct.bx;  // B[i].x  ← wrong slot
+    input[idx++] = ct.by;  // B[i].y  ← wrong slot
+}
+```
 
-## Reproduction
+The same interleaved pattern lived in
+`v3_verifier_solidity_test.go::buildVotePublicInputs` and
+`buildTallyPublicInputs`. So the harness fed proofs and inputs that
+matched each other but neither matched what the gnark-emitted
+verifier expected.
 
-Add a small Go test that compiles each circuit and measures the raw proof bytes:
+gnark walks struct fields depth-first in declaration order. For:
 
 ```go
-proof, _ := groth16.Prove(cc.CS, cc.ProvingKey, witness)
-var raw bytes.Buffer
-proof.WriteRawTo(&raw)
-fmt.Printf("%d bytes (%d field elements)\n", raw.Len(), raw.Len()/32)
+type TallyDecryptCircuit_8 struct {
+    PkCreator tedwards.Point                          `gnark:",public"`
+    A         [TallyDecryptChoices]tedwards.Point     `gnark:",public"`
+    B         [TallyDecryptChoices]tedwards.Point     `gnark:",public"`
+    Tallies   [TallyDecryptChoices]frontend.Variable  `gnark:",public"`
+    ...
+}
 ```
 
-Observed:
+the public-witness layout is:
 
 ```
-voteCast (v1/v2):              15261 constraints, raw proof = 324 bytes (10 field elements)
-voteCastHomomorphic_8:         72253 constraints, raw proof = 324 bytes (10 field elements)
-tallyDecrypt_8:                40958 constraints, raw proof = 324 bytes (10 field elements)
+input[0..1]   = PkCreator{X, Y}
+input[2..17]  = A[0..7]{X, Y}     ← all A's first as one block
+input[18..33] = B[0..7]{X, Y}     ← then all B's
+input[34..41] = Tallies[0..7]
 ```
 
-Inspect each emitted Solidity verifier:
+Confirmed empirically in `prover/public_input_order_test.go`. The
+fix is one block per array — pull `A[i]` out in a loop, then
+`B[i]` in a separate loop, then `Tallies`.
 
-```sh
-curl -s http://localhost:8088/api/vk/voteCast/solidity                | grep "function verifyProof"
-curl -s http://localhost:8088/api/vk/voteCastHomomorphic_8/solidity   | grep "function verifyProof"
-curl -s http://localhost:8088/api/vk/tallyDecrypt_8/solidity          | grep "function verifyProof"
-```
+## Wrong things I chased before getting here
 
-All three emit a single signature `verifyProof(uint256[8] calldata proof, uint256[N] calldata input)` — no `commitments[]` parameter. The "we reduce commitments(if any)" comment shows up in `publicInputMSM` but the function never actually receives commitments.
+1. **Commitment scheme handling.** The proof bytes are 324 bytes vs
+   the canonical 256, so I assumed gnark was adding commitment data
+   the auto-exported verifier didn't handle. Actually
+   `proof.Commitments` is empty `[]` and `proof.CommitmentPok` is
+   identity — the 68 extra bytes are just empty trailers from the
+   proof writer encoding empty fields. Verified by reflecting into
+   the `Proof` struct.
+2. **Hint-free circuits.** Tried replacing `curve.ScalarMul`
+   (which uses `scalarMulFakeGLV` hints) with hand-rolled
+   double-and-add. Didn't help — `api.ToBinary` itself uses
+   `NewHint` so the proof shape was unchanged. (And the hint vs
+   commitment connection was a red herring anyway.)
+3. **`backend.WithProverHashToFieldFunction(sha256.New())`.**
+   Found in gnark docs as a precondition for Solidity-compatible
+   commitment proofs. Tried it; produced byte-identical proofs.
+   (Would have mattered for circuits that actually use commitments;
+   ours don't.)
 
-The discrepancy: proof writer adds commitment data, vk reports zero commitments, verifier emitted without commitment-handling. Pairing equation breaks.
+## How the bug stayed hidden
 
-## What's been ruled out
+The mock-verifier path in `solidity/testgen.go:69-79` always returns
+`true`, so the Foundry e2e for v1/v2 voteCast never exercised the
+real verifier. v3 added a real-verifier test from day one
+(`internal/server/v3_verifier_solidity_test.go`) but I gated it
+under `t.Skip` when the public-input order failure produced
+`ProofInvalid()` — masking a 30-line fix as an upstream gnark
+limitation for several days.
 
-| Hypothesis | Evidence |
-|---|---|
-| v3-specific (BabyJubJub, fakeGLV hints) | v1/v2 voteCast also produces 324-byte proofs |
-| Hint type matters (user vs stdlib) | Replacing `curve.ScalarMul` (which uses GLV-style hints) with hand-rolled double-and-add (using only `Add`, `Double`, `ToBinary`) still produces 324-byte proofs — `ToBinary` itself triggers commitments via `gnark/std/math/bits/conversion_binary.go:125` |
-| Test harness encoding bug | The Foundry harness wired up by PR #9 was confirmed correct; the verifier itself reverts with `ProofInvalid()` |
-| v1/v2 was working with the auto-exported verifier | `solidity/testgen.go:69-79` generates a `MockVerifier` returning `true`; `internal/server/foundry_e2e_test.go` uses it. The auto-exported verifier has never been exercised in this repo. |
+## Lessons
 
-## Where the bug lives
+- **The auto-exported gnark Solidity verifier works.** Every commit
+  before this fix that suggested otherwise was wrong.
+- **gnark's struct walk order matters.** When constructing public
+  inputs for a Solidity verifier, build them by walking the struct
+  fields in declaration order — never by intuition about what
+  groups "look related".
+- **Skipping a test that fails for a confidently-wrong reason is
+  worse than leaving it failing.** Future-me: if a test fails with
+  a confusing error and the fix theory is bigger than the test
+  itself, the theory is probably wrong.
 
-**Upstream in gnark.** Specifically:
+## Reproduction artifacts retained
 
-- `frontend/cs/r1cs/builder.go` — when the r1cs builder encounters `NewHint` calls, it should register the hint outputs as committed values in the constraint system metadata. The proof writer ([`backend/groth16/bn254/marshal.go:33-56`](https://github.com/Consensys/gnark/blob/master/backend/groth16/bn254/marshal.go)) then attaches them as `Commitments` + `CommitmentPok` regardless of vk metadata.
-- `backend/groth16/bn254/solidity.go:39` — the template gates commitment-aware code on `numCommitments > 0` from the vk's perspective.
+- `prover/public_input_order_test.go` — prints the canonical
+  public-witness order for both v3 circuits. Useful regression
+  coverage if either circuit's struct shape ever changes.
 
-These two view of `numCommitments` should agree. They don't. Either:
-- The r1cs builder is failing to mark hint-bearing constraint systems as commitment-bearing (likely);
-- Or the proof writer is over-eagerly adding commitments to proofs that genuinely have no commitment metadata (less likely — would break verify too).
+## Related issue
 
-A targeted fix in gnark would be to ensure `vk.PublicAndCommitmentCommitted` (or equivalent) gets populated whenever the cs has any hint-bearing constraints, so the Solidity exporter takes the commitment-aware code path and the emitted verifier accepts the extra 68 bytes.
-
-## Remediation paths
-
-In rough order of effort (full discussion in the linked issue comment thread):
-
-1. **File an upstream gnark issue.** Provide the reproduction artifacts (proof byte size + emitted verifier shape). A one-flag flip during Setup or vk export would resolve it for every circuit in this repo without further work.
-
-2. **Custom Solidity codegen.** Stop relying on `vk.ExportSolidity` and write our own verifier template in `solidity/` that knows about gnark's actual proof shape. Higher engineering effort but cleanly de-couples from gnark's template choices. Reusable across all bitwrap circuits.
-
-3. **snarkjs re-export.** snarkjs's Groth16-to-Solidity exporter uses a different proof shape and convention; pipe gnark's proving key through snarkjs as a build step. Adds a JS dependency to the build pipeline.
-
-## What to update in this repo when one of those lands
-
-- `internal/server/v3_verifier_solidity_test.go:68` — un-skip `TestHandleVKV3SolidityCompilesAndVerifiesOnChain`.
-- `solidity/testgen.go:69-79` — replace `MockVerifier` with the real exported verifier in v1/v2 e2e tests.
-- `README.md` — drop the "Known limitations" section that documents this gap.
-- `docs/phase-b-roadmap.md` — re-open the on-chain settlement story for v3.
-
-## Reproduction artifacts
-
-| File | Purpose |
-|---|---|
-| `prover/v3_proof_layout_test.go` | Compute and print raw proof byte size for each v3 circuit |
-| `internal/server/v3_verifier_solidity_test.go` | Foundry harness that compiles + runs the gnark verifier; currently `t.Skip`'d at line 68 |
-| `internal/server/bundle_v3.go` | v3 governance contract showing the expected `verifyProof(uint256[8], uint256[N])` interface declaration |
-
-## Pointers
-
-- gnark proof writer: [`backend/groth16/bn254/marshal.go:33-56`](https://github.com/Consensys/gnark/blob/master/backend/groth16/bn254/marshal.go)
-- gnark Solidity template: [`backend/groth16/bn254/solidity.go`](https://github.com/Consensys/gnark/blob/master/backend/groth16/bn254/solidity.go)
-- gnark template's commitment gate: [`solidity.go:39`](https://github.com/Consensys/gnark/blob/master/backend/groth16/bn254/solidity.go) `{{- if gt $numCommitments 0 }}`
-- ToBinary's hint usage: [`std/math/bits/conversion_binary.go:125`](https://github.com/Consensys/gnark/blob/master/std/math/bits/conversion_binary.go)
-- bitwrap mock-verifier discovery: `solidity/testgen.go:69-79`
-- bitwrap on-chain test that's skipped: `internal/server/v3_verifier_solidity_test.go:68`
+Closed: #6. The on-chain v3 settlement story now works end-to-end
+through the auto-exported gnark verifier with no upstream
+dependencies.

@@ -65,7 +65,6 @@ func TestHandleVKV3SolidityShape(t *testing.T) {
 }
 
 func TestHandleVKV3SolidityCompilesAndVerifiesOnChain(t *testing.T) {
-	t.Skip("known limitation: exported BabyJubJub-based Groth16 verifiers reject valid proofs on-chain (see issue #6)")
 	if testing.Short() {
 		t.Skip("requires large circuit compile + forge")
 	}
@@ -247,6 +246,12 @@ func buildVotePublicInputs(
 	pollIDInt := new(big.Int).SetBytes([]byte(pollID))
 	pkx, pky := pointStrings(&pk)
 
+	// gnark walks struct fields depth-first in declaration order:
+	// PollID, VoterRegistryRoot, Nullifier, MaxChoices, PkCreator{X,Y},
+	// CtA[0..7]{X,Y} as one block, then CtB[0..7]{X,Y} as the next.
+	// Earlier interleaved (A[0],B[0],A[1],B[1],…) feeding caused the
+	// public-input MSM to land at a wrong group element and the
+	// Solidity verifier to reject with ProofInvalid().
 	inputs := []string{
 		pollIDInt.String(),
 		root,
@@ -255,6 +260,9 @@ func buildVotePublicInputs(
 		pkx,
 		pky,
 	}
+	type pt struct{ x, y string }
+	as := make([]pt, len(ciphertexts))
+	bs := make([]pt, len(ciphertexts))
 	for i := 0; i < len(ciphertexts); i++ {
 		aBytes, err := hex.DecodeString(ciphertexts[i].A)
 		if err != nil {
@@ -272,9 +280,14 @@ func buildVotePublicInputs(
 		if err != nil {
 			t.Fatalf("decode point B[%d]: %v", i, err)
 		}
-		ax, ay := pointStrings(&a)
-		bx, by := pointStrings(&b)
-		inputs = append(inputs, ax, ay, bx, by)
+		as[i].x, as[i].y = pointStrings(&a)
+		bs[i].x, bs[i].y = pointStrings(&b)
+	}
+	for _, p := range as {
+		inputs = append(inputs, p.x, p.y)
+	}
+	for _, p := range bs {
+		inputs = append(inputs, p.x, p.y)
 	}
 	if len(inputs) != 38 {
 		t.Fatalf("vote input length = %d, want 38", len(inputs))
@@ -290,7 +303,11 @@ func buildTallyPublicInputs(
 ) []string {
 	t.Helper()
 	pkx, pky := pointStrings(&pk)
+	// Same A-then-B block ordering as buildVotePublicInputs above.
 	inputs := []string{pkx, pky}
+	type pt struct{ x, y string }
+	as := make([]pt, len(aggregate))
+	bs := make([]pt, len(aggregate))
 	for i := 0; i < len(aggregate); i++ {
 		aBytes, err := hex.DecodeString(aggregate[i].A)
 		if err != nil {
@@ -308,9 +325,14 @@ func buildTallyPublicInputs(
 		if err != nil {
 			t.Fatalf("decode aggregate point B[%d]: %v", i, err)
 		}
-		ax, ay := pointStrings(&a)
-		bx, by := pointStrings(&b)
-		inputs = append(inputs, ax, ay, bx, by)
+		as[i].x, as[i].y = pointStrings(&a)
+		bs[i].x, bs[i].y = pointStrings(&b)
+	}
+	for _, p := range as {
+		inputs = append(inputs, p.x, p.y)
+	}
+	for _, p := range bs {
+		inputs = append(inputs, p.x, p.y)
 	}
 	for _, tally := range tallies {
 		inputs = append(inputs, fmt.Sprintf("%d", tally))

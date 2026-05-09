@@ -163,10 +163,6 @@ GET  /api/vk/{circuit}/solidity Download Solidity verifier contract
 
 For v3, the bundle includes generated Solidity verifiers and `BitwrapZKPollV3` wiring for close-time settlement with the aggregate artifact (`data/polls/{id}/tally.json`).
 
-## Known limitations
-
-- Exported Solidity verifiers for the current BabyJubJub-flavored v3 circuits (`voteCastHomomorphic_8`, `tallyDecrypt_8`) compile, but can reject proofs that verify successfully in Go (`groth16.Verify`). This upstream limitation is tracked in issue #6; on-chain pairing-equation parity is pending dedicated follow-up work.
-
 ## CDN
 
 Client-side modules are available via jsDelivr:

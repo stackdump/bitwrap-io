@@ -171,6 +171,11 @@ contract BitwrapZKPollV3 {
             return false;
         }
 
+        // gnark walks the circuit struct depth-first in declaration order:
+        // PkCreator{X,Y}, A[0..7]{X,Y} as one block, then B[0..7]{X,Y}
+        // as the next, then Tallies[0..7]. Feeding (A,B) interleaved
+        // per-index would land the public-input MSM at the wrong group
+        // element and verifyProof would always revert with ProofInvalid().
         uint256[42] memory input;
         input[0] = pkCreator[0];
         input[1] = pkCreator[1];
@@ -180,6 +185,9 @@ contract BitwrapZKPollV3 {
             Ciphertext memory ct = aggregateCiphertexts[i];
             input[idx++] = ct.ax;
             input[idx++] = ct.ay;
+        }
+        for (uint256 i = 0; i < 8; i++) {
+            Ciphertext memory ct = aggregateCiphertexts[i];
             input[idx++] = ct.bx;
             input[idx++] = ct.by;
         }
