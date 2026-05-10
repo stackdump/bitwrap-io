@@ -51,12 +51,21 @@ jobs:
       - name: Build wasm prover
         run: make wasm
 
-      # Race detector roughly 5-10× the wall clock of normal `go test`.
-      # internal/server and prover both blow past the default 10m
-      # ceiling (gnark Setup + Prove are heavy). 30m headroom keeps it
-      # green without giving up on the race build.
-      - name: Go tests (race detector)
-        run: go test -race -count=1 -timeout 30m ./...
+      # Race detector + gnark Setup/Prove blow past the default 10m
+      # test ceiling. -short skips the heavy ZK end-to-end tests
+      # (gated on testing.Short() in internal/server/*_test.go and
+      # prover/*_test.go) — those wouldn't surface a race anyway since
+      # gnark's solver runs sequentially in the prover path. Race
+      # detector still covers HTTP handlers, storage, parsing, and
+      # the in-memory state machine, which is where actual races
+      # would live.
+      - name: Go tests (race detector, short)
+        run: go test -race -short -count=1 -timeout 15m ./...
+
+      # Full coverage without race — catches functional regressions in
+      # the heavy tests that race-mode skips.
+      - name: Go tests (full, no race)
+        run: go test -count=1 -timeout 15m ./...
 
   js-parity:
     runs-on: ubuntu-latest
