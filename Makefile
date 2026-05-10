@@ -43,16 +43,19 @@ gen-circuits: build
 	./bitwrap -synthesize erc05725 -output prover/erc05725_gen.go
 	./bitwrap -synthesize vote -output prover/vote_gen.go
 
-# Regression check for issue #3 (gnark-crypto twistededwards
-# initOnce-on-PointExtended-Add fix in our fork). Builds wasm + native
-# pk/vk for the v3 vote circuit and runs the wasm prover against the
-# native bytes via the regular loadKeys path. Pre-fix this would fail
-# at `constraint #2459 not satisfied` mid scalarMulFakeGLV.
-# Requires a v3 witness dump at /tmp/v3-witness-dump.json — produced by
-# `e2e/v3_dump_witness.spec.js`.
+# Regression check for issue #3 (gnark-crypto twisted-Edwards
+# PointExtended.Add lazy-init bug). Builds wasm + native pk/vk for the
+# v3 vote circuit and runs the wasm prover against the native bytes via
+# the regular loadKeys path. The wasm prover applies the workaround
+# (`_ = babyjubjub.GetEdwardsCurve()` at startup) so loadKeys+prove
+# returns a real proof. Without that line — or without an upstream gnark-
+# crypto fix — this fails with `constraint not satisfied` mid
+# scalarMulFakeGLV. Requires a v3 witness dump at
+# /tmp/v3-witness-dump.json (produced by `e2e/v3_dump_witness.spec.js`).
 test-wasm-prove: wasm
 	NATIVE_EXPORT_CIRCUIT=voteCastHomomorphic_8 go test -timeout 600s -run TestNativeExportKeys -v ./prover
 	node public/wasm_load_native_diag.mjs voteCastHomomorphic_8
+	go test -timeout 120s -run TestLoadKeysOnlyProveSubprocess -v ./prover
 
 clean:
 	rm -f bitwrap public/prover.wasm public/wasm_exec.js

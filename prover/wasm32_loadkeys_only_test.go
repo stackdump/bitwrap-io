@@ -9,20 +9,19 @@ import (
 )
 
 // TestLoadKeysOnlyProveSubprocess exercises the *exact* code path that
-// surfaced gnark-crypto's missing initOnce.Do(initCurveParams) in
-// twistededwards.PointExtended.Add (issue #3): a fresh process that
-// loads cs/pk/vk for a BabyJubJub-using circuit, builds a witness,
-// proves — without ever calling frontend.Compile or
-// twistededwards.GetEdwardsCurve first.
+// surfaces the upstream gnark-crypto bug from issue #3 — a fresh process
+// that loads cs/pk/vk for a BabyJubJub-using circuit, builds a witness,
+// and proves, without ever calling `frontend.Compile` first. The
+// process MUST first call `babyjubjub.GetEdwardsCurve()` to arm the
+// `sync.Once`-guarded curve-params init, otherwise scalarMulHint
+// computes a zero D, the in-circuit scalarMulFakeGLV check fires, and
+// prove fails at "constraint not satisfied".
 //
 // In-process the lazy init is sticky: any earlier test that uses
-// gnark's frontend or gnark-crypto's twistededwards package triggers
+// gnark's frontend or gnark-crypto's twistededwards Add path triggers
 // the curve-params init, masking the bug. So we re-exec ourselves with
-// `go test` against this very test file, isolated from the rest of
-// the suite.
-//
-// Pre-fix this subprocess fails at "constraint #2459 not satisfied"
-// mid scalarMulFakeGLV. Post-fix it returns a valid Groth16 proof.
+// `go test` against just this package, then run the inner body in a
+// subprocess that does only the load+prove dance.
 //
 // Run: go test -run TestLoadKeysOnlyProveSubprocess -v ./prover
 func TestLoadKeysOnlyProveSubprocess(t *testing.T) {
@@ -36,7 +35,6 @@ func TestLoadKeysOnlyProveSubprocess(t *testing.T) {
 		t.Skipf("missing %s — run `cd e2e && npx playwright test --project=v3 -g dump` first", witnessPath)
 	}
 
-	// Make sure a fresh native dump of v3 keys is on disk.
 	for _, suffix := range []string{".cs", ".pk", ".vk"} {
 		if _, err := os.Stat("/tmp/native-keys-voteCastHomomorphic_8" + suffix); err != nil {
 			t.Skipf("missing /tmp/native-keys-voteCastHomomorphic_8%s — run `NATIVE_EXPORT_CIRCUIT=voteCastHomomorphic_8 go test -run TestNativeExportKeys ./prover` first", suffix)
@@ -56,13 +54,6 @@ func TestLoadKeysOnlyProveSubprocess(t *testing.T) {
 		t.Fatalf("subprocess: %v", runErr)
 	}
 	if !strings.Contains(string(out), "subprocess prove + verify OK") {
-		t.Fatal("subprocess didn't reach the OK line — fix likely regressed")
+		t.Fatal("subprocess didn't reach the OK line")
 	}
-}
-
-// runLoadKeysOnlyProve runs inside the inner subprocess. It is the
-// fresh-process body that exercises the bug.
-func runLoadKeysOnlyProve(t *testing.T) {
-	loadedAndProveOK(t)
-	t.Log("subprocess prove + verify OK")
 }

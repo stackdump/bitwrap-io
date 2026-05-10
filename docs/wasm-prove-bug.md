@@ -1,10 +1,11 @@
 # gnark-crypto twistededwards.PointExtended.Add missing curve-params init
 
-**Status:** fixed in our gnark-crypto fork (`fix-pointextended-add-init`),
-pinned via `replace` in [`go.mod`](../go.mod). Regression check is
-`make test-wasm-prove`.
+**Status:** worked around in-process. No fork of gnark-crypto needed.
+**Workaround:** one-line `_ = babyjubjub.GetEdwardsCurve()` at the top of
+`cmd/prover-wasm/main.go::main` to arm the package-level `sync.Once`.
+**Regression check:** `make test-wasm-prove` (and the subprocess-isolated
+`prover/wasm32_loadkeys_only_test.go`).
 **Surfaced:** Phase B / B5.11 (commit `19a6453`).
-**Fork landed:** 2026-05-09.
 
 ## Root cause
 
@@ -31,7 +32,7 @@ bls12-381 (and bandersnatch), bls24-315, bls24-317, bw6-633, bw6-761.
 The bitwrap browser flow loads cs/pk/vk via `/api/keys` and never
 compiles the circuit on the client. The first thing that touches
 twistededwards is the BN254 `scalarMulHint` invoked during
-`r1cs.Solve` — which goes:
+`r1cs.Solve`:
 
 ```
 scalarMulHint
@@ -40,7 +41,7 @@ scalarMulHint
   → PointExtended.Add  (reads curveParams.D, never initialised)
 ```
 
-`curveParams.D == 0` makes the cross-term zero, the in-circuit
+`curveParams.D == 0` zeroes out the cross-term, the in-circuit
 `scalarMulFakeGLV` cross-check fires:
 
 ```
@@ -49,14 +50,17 @@ constraint #2459 is not satisfied:
    != 16794912830547356530447244331793267724748168553544916545917482353364877864433
 ```
 
-On the server side the bug is invisible: `frontend.Compile` runs
-`std/algebra/native/twistededwards.NewEdCurve` which calls
-gnark-crypto's `GetEdwardsCurve`, triggering `initOnce.Do` long before
-any prove starts. The wasm32-vs-native framing in earlier versions of
-this doc was a red herring; the bug applies to amd64 just as much, but
-no production amd64 client of bitwrap loads keys without compiling.
+Server-side the bug is invisible: `frontend.Compile` runs at startup
+and reaches `std/algebra/native/twistededwards.NewEdCurve`, which calls
+gnark-crypto's `GetEdwardsCurve`, tripping `initOnce.Do` long before any
+prove. The wasm32-vs-native framing in earlier versions of this doc
+was a red herring; the bug applies to amd64 just as much, but no
+production amd64 client of bitwrap loads keys without first compiling.
+The subprocess regression test `prover/wasm32_loadkeys_only_test.go`
+exhibits the bug on amd64 if you remove the `_ = babyjubjub.GetEdwardsCurve()`
+line from inside it.
 
-## Hypotheses ruled out (kept as a record of the chase)
+## Hypotheses ruled out (the chase)
 
 | Hypothesis | Evidence |
 |---|---|
@@ -64,13 +68,40 @@ no production amd64 client of bitwrap loads keys without compiling.
 | Wasm-side deserializer is lossy | Round-trip in wasm yields byte-identical bytes (`public/wasm_roundtrip_diag.mjs`) |
 | Bug is generic to wasm32 prove | (A) succeeds for `mint` (no scalarMulFakeGLV); only v3 circuits fail (`public/wasm_load_native_diag.mjs mint` vs `voteCastHomomorphic_8`) |
 | Bug is in cs serialization | `reflect.DeepEqual` between fresh-compile and load-from-bytes cs reports diffs only in compile-only fields (`mCoeffs`, `lbWireLevel`); rebuilding those by hand inside wasm did not fix prove |
-| Bug is in pk or vk | `compareAnyObjects(freshPk, loadedPk)` and `compareAnyObjects(freshVk, loadedVk)` report zero diffs over every G1Affine / G2Affine / Domain field |
-| Bug is in unexported state of cs | Loaded-cs + fresh-Setup pk also fails; copying the four `cbor:"-"` fields fixes it; isolating each field shows even an empty copy fixes it; merely calling `frontend.Compile` *before* prove fixes it; the trigger is anything that touches the package-level `curveParams` first |
+| Bug is in pk or vk | Round-tripped pk/vk are byte-identical and reflect-equal across every G1Affine / G2Affine / Domain field |
+| Bug is in unexported state of cs | Loaded-cs + fresh-Setup pk also fails; copying any single `cbor:"-"` field from a fresh compile fixes it; merely calling `frontend.Compile` *before* prove fixes it; the trigger is anything that touches the package-level `curveParams` first |
 
-## Fix
+## Workaround
 
-`gnark-crypto/ecc/<curve>/twistededwards/point.go`, top of
-`PointExtended.Add`:
+Apply once at process startup, before any prove. The cost is one
+`sync.Once.Do` and a value-copy of a `CurveParams` struct.
+
+```go
+import (
+    babyjubjub "github.com/consensys/gnark-crypto/ecc/bn254/twistededwards"
+)
+
+func main() {
+    // Tickle gnark-crypto's lazy curve-params init.
+    _ = babyjubjub.GetEdwardsCurve()
+
+    // ... rest of init ...
+}
+```
+
+In bitwrap-io this lives at the top of
+[`cmd/prover-wasm/main.go::main`](../cmd/prover-wasm/main.go). The Go
+binary doesn't need it — `frontend.Compile` runs during server startup
+and arms the `sync.Once` for the rest of the process — but it would be
+correct (and harmless) to add it anywhere a prove path could run before
+a compile.
+
+## Possible upstream fix (for reference)
+
+If you ever want to push the fix to Consensys, the change is one line
+on top of the v0.19.2 generator template at
+`gnark-crypto/internal/generator/edwards/template/point.go.tmpl`,
+function `(*PointExtended).Add`:
 
 ```go
 func (p *PointExtended) Add(p1, p2 *PointExtended) *PointExtended {
@@ -81,10 +112,8 @@ func (p *PointExtended) Add(p1, p2 *PointExtended) *PointExtended {
 }
 ```
 
-Same line in the corresponding template
-`internal/generator/edwards/template/point.go.tmpl`. Patched in
-[stackdump/gnark-crypto@fix-pointextended-add-init](https://github.com/stackdump/gnark-crypto/tree/fix-pointextended-add-init);
-pinned in `go.mod` via the `replace` directive.
+Then regenerate per-curve. We're not maintaining a fork — the
+in-process workaround is a smaller surface to own.
 
 ## Reproduction artifacts in this repo
 
@@ -96,7 +125,7 @@ pinned in `go.mod` via the `replace` directive.
 | `prover/hint_ids_test.go` | Print hint IDs for cross-platform comparison |
 | `prover/wasm_export_diag_test.go` | Native Go: dump cs/pk/vk for any registered circuit |
 | `prover/wasm_keys_native_load_test.go` | Native Go: prove + verify against wasm-Setup keys |
-| `prover/wasm32_loadkeys_only_test.go` | Native Go: load-keys-then-prove without prior compile/Setup — pre-fix this would fail; passes now |
+| `prover/wasm32_loadkeys_only_test.go` | Native Go subprocess: load-keys-then-prove with the workaround line; remove the workaround line to reproduce the bug on amd64 |
 | `public/v3_wasm_prove_diag.mjs` | Node-WASM: replay `loadKeys` + `prove` against a server keystore |
 | `public/v3_wasm_compile_prove_diag.mjs` | Node-WASM: bypass `loadKeys` with fresh `compileCircuit` |
 | `public/v3_wasm_export_diag.mjs` | Node-WASM: compile a circuit and dump cs/pk/vk bytes |
@@ -106,12 +135,16 @@ pinned in `go.mod` via the `replace` directive.
 
 ## Pointers
 
-- Patched function: `gnark-crypto@fix-pointextended-add-init` /
-  `ecc/bn254/twistededwards/point.go`, function `PointExtended.Add`
+- Buggy function: `gnark-crypto@v0.19.2 ecc/bn254/twistededwards/point.go`,
+  `func (p *PointExtended) Add(p1, p2 *PointExtended) *PointExtended` —
+  reads `curveParams.D` without an `initOnce.Do(initCurveParams)`
+- Same template generates the same bug for every other curve under
+  `gnark-crypto/ecc/*/twistededwards/point.go`
 - Generator template:
-  `gnark-crypto/internal/generator/edwards/template/point.go.tmpl`,
-  function `(*PointExtended).Add`
-- Off-circuit hint: `gnark@v0.14.0/std/algebra/native/twistededwards/hints.go::scalarMulHint`
-- In-circuit caller: `gnark@v0.14.0/std/algebra/native/twistededwards/point.go::scalarMulFakeGLV`
+  `gnark-crypto/internal/generator/edwards/template/point.go.tmpl`
+- Off-circuit hint that surfaces the bug:
+  `gnark@v0.14.0/std/algebra/native/twistededwards/hints.go::scalarMulHint`
+- In-circuit caller:
+  `gnark@v0.14.0/std/algebra/native/twistededwards/point.go::scalarMulFakeGLV`
 - bitwrap-side endpoints: `internal/server/server.go` (`handleKeys`),
   `internal/server/keys_endpoint_test.go`

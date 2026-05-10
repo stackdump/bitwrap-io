@@ -11,6 +11,7 @@ import (
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr/mimc"
+	babyjubjub "github.com/consensys/gnark-crypto/ecc/bn254/twistededwards"
 	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/constraint"
 	"github.com/consensys/gnark/frontend"
@@ -30,6 +31,19 @@ type compiledCircuit struct {
 
 func main() {
 	fmt.Println("bitwrap-prover WASM loaded")
+
+	// Workaround for a gnark-crypto bug (issue #3): the off-circuit
+	// BabyJubJub `PointExtended.Add` reads `curveParams.D` but doesn't
+	// trigger `initOnce.Do(initCurveParams)` itself. The lazy init is
+	// normally tripped by `frontend.Compile` calling `NewEdCurve` →
+	// `GetEdwardsCurve`; clients that only `loadKeys` then `prove`
+	// (the browser flow) skip that path and read `curveParams.D == 0`,
+	// which makes scalarMulHint compute the wrong point and the
+	// in-circuit `scalarMulFakeGLV` cross-check fire on
+	// `voteCastHomomorphic_8` and `tallyDecrypt_8`. One forced call
+	// here at start-up arms the sync.Once for the entire process.
+	// See docs/wasm-prove-bug.md for the chase.
+	_ = babyjubjub.GetEdwardsCurve()
 
 	api := map[string]interface{}{
 		"version":        js.FuncOf(version),

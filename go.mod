@@ -42,11 +42,3 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	lukechampine.com/blake3 v1.1.6 // indirect
 )
-
-// Pin to a fork of gnark-crypto that adds the missing
-// initOnce.Do(initCurveParams) call inside PointExtended.Add — without
-// it, the wasm32 prover reads curveParams.D as zero on a load-keys-then-
-// prove flow that never compiled the circuit in this process. See
-// docs/wasm-prove-bug.md and bitwrap-io issue #3 for the trace; the fork
-// branch is fix-pointextended-add-init off the v0.19.2 tag.
-replace github.com/consensys/gnark-crypto => github.com/stackdump/gnark-crypto v0.19.2-0.20260509233259-2fce6bd532ad
