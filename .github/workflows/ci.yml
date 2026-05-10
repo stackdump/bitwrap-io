@@ -51,8 +51,12 @@ jobs:
       - name: Build wasm prover
         run: make wasm
 
+      # Race detector roughly 5-10× the wall clock of normal `go test`.
+      # internal/server and prover both blow past the default 10m
+      # ceiling (gnark Setup + Prove are heavy). 30m headroom keeps it
+      # green without giving up on the race build.
       - name: Go tests (race detector)
-        run: go test -race -count=1 ./...
+        run: go test -race -count=1 -timeout 30m ./...
 
   js-parity:
     runs-on: ubuntu-latest
@@ -167,8 +171,14 @@ jobs:
             sleep 1
           done
 
+      # The v3 project requires the bitwrap server running with the
+      # prover enabled (it creates real homomorphic-tally polls). CI
+      # boots the server with `-no-prover` to keep the workflow under
+      # a reasonable time budget, so v3 is excluded here. The prod
+      # project targets a deployed bitwrap instance and is meant for
+      # ad-hoc runs, not the per-push gate.
       - name: Run Playwright tests
-        run: cd e2e && npx playwright test
+        run: cd e2e && npx playwright test --project=chromium --project=wallet
 
       - name: Stop server
         if: always()
