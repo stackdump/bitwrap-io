@@ -16,6 +16,11 @@ jobs:
         with:
           go-version: '1.24'
 
+      # public/embed.go uses //go:embed all:*.wasm; build that artifact
+      # first so go vet can resolve the embed directive.
+      - name: Build wasm prover
+        run: make wasm
+
       - name: Go vet
         run: go vet ./...
 
@@ -28,6 +33,9 @@ jobs:
         with:
           go-version: '1.24'
 
+      - name: Build wasm prover
+        run: make wasm
+
       - name: Build
         run: make build
 
@@ -39,6 +47,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
+
+      - name: Build wasm prover
+        run: make wasm
 
       - name: Go tests (race detector)
         run: go test -race -count=1 ./...
@@ -136,6 +147,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      - name: Build wasm prover
+        run: make wasm
 
       - name: Build server
         run: make build
