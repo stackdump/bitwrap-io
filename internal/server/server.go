@@ -78,6 +78,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch {
+	// Prometheus metrics, scraped by the Datadog agent on pflow.dev.
+	case r.URL.Path == "/metrics" && r.Method == http.MethodGet:
+		handleMetrics(w, r)
+
 	// Deploy endpoints (self-authenticated via HMAC / token)
 	case r.URL.Path == "/webhook/github" && r.Method == http.MethodPost:
 		s.HandleDeployWebhook(w, r)
