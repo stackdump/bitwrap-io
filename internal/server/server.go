@@ -217,7 +217,9 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case strings.HasSuffix(name, ".html"):
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	case strings.HasSuffix(name, ".js"):
+	case strings.HasSuffix(name, ".js"), strings.HasSuffix(name, ".mjs"):
+		// .mjs are ES modules (seal-cid.mjs, vendor/jsonld.bundle.mjs); browsers
+		// refuse to execute module scripts served as text/plain.
 		w.Header().Set("Content-Type", "application/javascript")
 	case strings.HasSuffix(name, ".css"):
 		w.Header().Set("Content-Type", "text/css")
