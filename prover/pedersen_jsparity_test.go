@@ -33,6 +33,12 @@ func TestPedersenJSParity(t *testing.T) {
 
 func findRepoRoot(t *testing.T) string {
 	t.Helper()
+	// Under `bazel test` the repo tree isn't on disk, and these Go-side
+	// node-exec parity checks are redundant with the hermetic //public:*_test
+	// (nodejs_test) targets. Skip here; they still run fully under `go test`.
+	if os.Getenv("TEST_SRCDIR") != "" {
+		t.Skip("repo-tree parity test — runs under `go test`; JS-side parity covered by //public:*_test under Bazel")
+	}
 	dir, _ := os.Getwd()
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {

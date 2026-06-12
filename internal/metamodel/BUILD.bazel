@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "metamodel",
+    srcs = [
+        "cid.go",
+        "errors.go",
+        "runtime.go",
+        "schema.go",
+        "snapshot.go",
+        "validate.go",
+    ],
+    importpath = "github.com/stackdump/bitwrap-io/internal/metamodel",
+    visibility = ["//:__subpackages__"],
+)
+
+go_test(
+    name = "metamodel_test",
+    srcs = ["schema_test.go"],
+    embed = [":metamodel"],
+)

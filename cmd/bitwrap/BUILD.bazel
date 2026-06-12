@@ -1,0 +1,39 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "bitwrap_lib",
+    srcs = [
+        "close_poll.go",
+        "main.go",
+    ],
+    importpath = "github.com/stackdump/bitwrap-io/cmd/bitwrap",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//dsl",
+        "//erc",
+        "//internal/metamodel",
+        "//internal/server",
+        "//internal/store",
+        "//prover",
+        "//prover/synth",
+        "//public",
+        "//solidity",
+        "@com_github_consensys_gnark//backend/groth16",
+        "@com_github_consensys_gnark//frontend",
+        "@com_github_consensys_gnark//std/algebra/native/twistededwards",
+        "@com_github_consensys_gnark_crypto//ecc",
+        "@com_github_consensys_gnark_crypto//ecc/bn254/twistededwards",
+    ],
+)
+
+go_binary(
+    name = "bitwrap",
+    embed = [":bitwrap_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "bitwrap_test",
+    srcs = ["close_poll_test.go"],
+    embed = [":bitwrap_lib"],
+)

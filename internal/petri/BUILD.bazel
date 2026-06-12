@@ -1,0 +1,22 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "petri",
+    srcs = [
+        "bridge.go",
+        "cid.go",
+        "errors.go",
+        "model.go",
+        "schema.go",
+        "state.go",
+    ],
+    importpath = "github.com/stackdump/bitwrap-io/internal/petri",
+    visibility = ["//:__subpackages__"],
+    deps = ["//internal/metamodel"],
+)
+
+go_test(
+    name = "petri_test",
+    srcs = ["petri_test.go"],
+    embed = [":petri"],
+)

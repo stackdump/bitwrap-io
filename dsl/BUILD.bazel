@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "dsl",
+    srcs = [
+        "ast.go",
+        "builder.go",
+        "lexer.go",
+        "parser.go",
+    ],
+    importpath = "github.com/stackdump/bitwrap-io/dsl",
+    visibility = ["//visibility:public"],
+    deps = ["//internal/metamodel"],
+)
+
+go_test(
+    name = "dsl_test",
+    srcs = ["dsl_test.go"],
+    data = glob(["testdata/**"]),
+    embed = [":dsl"],
+)

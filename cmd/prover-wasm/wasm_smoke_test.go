@@ -40,6 +40,11 @@ func TestProverWasmCircuitsSmoke(t *testing.T) {
 
 func repoRoot(t *testing.T) string {
 	t.Helper()
+	// Skip the Go-side node+wasm smoke under Bazel (the repo tree isn't on
+	// disk); it runs under `go test`. Hermetic wasm is built by //public:gen_prover_wasm.
+	if os.Getenv("TEST_SRCDIR") != "" {
+		t.Skip("repo-tree wasm smoke — runs under `go test`")
+	}
 	dir, _ := os.Getwd()
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {

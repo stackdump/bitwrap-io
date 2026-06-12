@@ -35,6 +35,11 @@ func TestCIDJSParity(t *testing.T) {
 
 func sealRepoRoot(t *testing.T) string {
 	t.Helper()
+	// See note in prover/pedersen_jsparity_test.go: skip the Go-side node-exec
+	// parity under Bazel (covered by the hermetic //public:*_test targets).
+	if os.Getenv("TEST_SRCDIR") != "" {
+		t.Skip("repo-tree parity test — runs under `go test`; JS-side parity covered by //public:*_test under Bazel")
+	}
 	dir, _ := os.Getwd()
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {

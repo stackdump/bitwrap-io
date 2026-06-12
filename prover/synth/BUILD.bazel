@@ -1,0 +1,36 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "synth",
+    srcs = [
+        "approve.go",
+        "burn.go",
+        "emit.go",
+        "guard.go",
+        "mint.go",
+        "synth.go",
+        "transfer.go",
+        "transfer_from.go",
+        "vesting_claim.go",
+        "vote.go",
+    ],
+    importpath = "github.com/stackdump/bitwrap-io/prover/synth",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//internal/metamodel",
+        "//internal/metamodel/guard",
+    ],
+)
+
+go_test(
+    name = "synth_test",
+    srcs = ["synth_test.go"],
+    deps = [
+        ":synth",
+        "//erc",
+        "//prover",
+        "@com_github_consensys_gnark//frontend",
+        "@com_github_consensys_gnark//test",
+        "@com_github_consensys_gnark_crypto//ecc",
+    ],
+)

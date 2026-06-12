@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "solidity",
+    srcs = [
+        "codegen.go",
+        "genesisgen.go",
+        "guardgen.go",
+        "testgen.go",
+    ],
+    importpath = "github.com/stackdump/bitwrap-io/solidity",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//internal/metamodel",
+        "//internal/metamodel/guard",
+    ],
+)

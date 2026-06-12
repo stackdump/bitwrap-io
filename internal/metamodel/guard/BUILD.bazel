@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "guard",
+    srcs = [
+        "aggregate.go",
+        "eval.go",
+        "guard.go",
+        "invariant.go",
+        "lexer.go",
+        "parser.go",
+    ],
+    importpath = "github.com/stackdump/bitwrap-io/internal/metamodel/guard",
+    visibility = ["//:__subpackages__"],
+    deps = ["@com_github_holiman_uint256//:uint256"],
+)

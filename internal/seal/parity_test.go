@@ -12,6 +12,11 @@ import (
 // side by parity/parity_check.mjs, so a green run on both languages proves the
 // Go and JS CID pipelines agree byte-for-byte. See `make test-parity`.
 func TestParityGolden(t *testing.T) {
+	// Reads ../../parity/* from the repo tree, absent in Bazel's sandbox.
+	// Runs under `go test`; CID parity is also covered by //public:seal-cid.
+	if os.Getenv("TEST_SRCDIR") != "" {
+		t.Skip("repo-tree golden test — runs under `go test`")
+	}
 	root := filepath.Join("..", "..", "parity")
 
 	goldenRaw, err := os.ReadFile(filepath.Join(root, "golden.json"))

@@ -1,0 +1,35 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "prover-wasm_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/stackdump/bitwrap-io/cmd/prover-wasm",
+    visibility = ["//visibility:private"],
+    deps = select({
+        "@io_bazel_rules_go//go/platform:js_wasm": [
+            "//prover",
+            "@com_github_consensys_gnark//backend/groth16",
+            "@com_github_consensys_gnark//constraint",
+            "@com_github_consensys_gnark//frontend",
+            "@com_github_consensys_gnark//frontend/cs/r1cs",
+            "@com_github_consensys_gnark_crypto//ecc",
+            "@com_github_consensys_gnark_crypto//ecc/bn254/fr",
+            "@com_github_consensys_gnark_crypto//ecc/bn254/fr/mimc",
+            "@com_github_consensys_gnark_crypto//ecc/bn254/twistededwards",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+go_binary(
+    name = "prover-wasm",
+    embed = [":prover-wasm_lib"],
+    goarch = "wasm",  # keep: main.go is //go:build js && wasm — always cross-build for wasm
+    goos = "js",  # keep
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "prover-wasm_test",
+    srcs = ["wasm_smoke_test.go"],
+)

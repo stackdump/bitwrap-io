@@ -257,6 +257,11 @@ schema ERC20Approve {
 
 func findProjectRoot(t *testing.T) string {
 	t.Helper()
+	// Skip the Go-side node-exec parity under Bazel (covered by the hermetic
+	// //public:*_test targets); still runs under `go test`.
+	if os.Getenv("TEST_SRCDIR") != "" {
+		t.Skip("repo-tree parity test — runs under `go test`; JS-side parity covered by //public:*_test under Bazel")
+	}
 	// Walk up from the test binary's working directory to find go.mod
 	dir, _ := os.Getwd()
 	for {

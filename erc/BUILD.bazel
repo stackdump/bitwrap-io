@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "erc",
+    srcs = [
+        "combined.go",
+        "erc000.go",
+        "erc01155.go",
+        "erc020.go",
+        "erc04626.go",
+        "erc05725.go",
+        "erc0721.go",
+        "vote.go",
+    ],
+    importpath = "github.com/stackdump/bitwrap-io/erc",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//arc",
+        "//internal/metamodel",
+    ],
+)

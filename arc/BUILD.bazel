@@ -1,0 +1,31 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "arc",
+    srcs = [
+        "bridge.go",
+        "cid.go",
+        "errors.go",
+        "merkle.go",
+        "model.go",
+        "safemath.go",
+        "state.go",
+    ],
+    importpath = "github.com/stackdump/bitwrap-io/arc",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//internal/metamodel",
+        "//internal/metamodel/guard",
+        "//internal/petri",
+        "@com_github_consensys_gnark_crypto//ecc/bn254/fr",
+        "@com_github_consensys_gnark_crypto//ecc/bn254/fr/mimc",
+        "@com_github_holiman_uint256//:uint256",
+    ],
+)
+
+go_test(
+    name = "arc_test",
+    srcs = ["merkle_test.go"],
+    embed = [":arc"],
+    deps = ["@com_github_consensys_gnark_crypto//ecc/bn254/fr"],
+)
