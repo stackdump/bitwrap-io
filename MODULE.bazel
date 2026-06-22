@@ -4,9 +4,10 @@ Petri nets as ZK containers — editor + gnark prover + Solidity codegen. Go dep
 are sourced from go.mod via Gazelle's go_deps extension, so `go build`/`go test`
 (and the Makefile) keep working alongside Bazel.
 
-Pins mirror go-pflow (same Go 1.24 line) so the two repos share remote-cache
-artifacts once Phase 2 lands. go-pflow is consumed as an ordinary registry dep
-(go.mod pins v0.9.0) — no local replace, so no cross-repo wiring is needed here.
+Pins mirror the ecosystem-wide line (rules_go 0.61.1 / gazelle 0.51.3 / Go SDK
+1.26.0) so every repo's build graph produces matching remote-cache action keys.
+go-pflow is consumed as an ordinary registry dep (go.mod pins v0.9.0) — no local
+replace, so no cross-repo wiring is needed here.
 """
 
 module(
@@ -14,8 +15,8 @@ module(
     version = "0.0.0",
 )
 
-bazel_dep(name = "rules_go", version = "0.55.1", repo_name = "io_bazel_rules_go")
-bazel_dep(name = "gazelle", version = "0.44.0", repo_name = "bazel_gazelle")
+bazel_dep(name = "rules_go", version = "0.61.1", repo_name = "io_bazel_rules_go")
+bazel_dep(name = "gazelle", version = "0.51.3", repo_name = "bazel_gazelle")
 
 # Hermetic Node.js — runs the vanilla-ESM parity tests (no npm/package.json) as
 # Bazel test targets, so `bazel test //...` covers Go<->JS parity.
@@ -24,9 +25,11 @@ bazel_dep(name = "rules_nodejs", version = "6.7.4")
 node = use_extension("@rules_nodejs//nodejs:extensions.bzl", "node")
 node.toolchain(node_version = "22.14.0")
 
-# Hermetic Go SDK (matches go.mod toolchain). nogo runs static analysis at build.
+# Hermetic Go SDK, pinned to the ecosystem-wide line (1.26.0) so compiled
+# actions share remote-cache keys graph-wide. The SDK only needs to be >= go.mod's
+# `go`/`toolchain` directives. nogo runs static analysis at build.
 go_sdk = use_extension("@io_bazel_rules_go//go:extensions.bzl", "go_sdk")
-go_sdk.download(version = "1.24.10")
+go_sdk.download(version = "1.26.0")
 go_sdk.nogo(nogo = "//:nogo")
 
 # External Go deps come straight from go.mod / go.sum (incl. go-pflow v0.9.0).
