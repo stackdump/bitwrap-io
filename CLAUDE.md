@@ -100,3 +100,22 @@ Second cross-project consumer on the Bazel graph (go-pflow ROADMAP Phase 1 — c
 ```bash
 ssh pflow.dev "cd ~/Workspace/bitwrap-io && git pull && make build && ~/services restart bitwrap"
 ```
+
+## Testnet publishing
+
+Generated Foundry deploy scripts read the deployer key from the **`PRIVATE_KEY`** env var
+(`solidity/genesisgen.go` emits `vm.envUint("PRIVATE_KEY")` + `vm.startBroadcast`). To publish
+a generated contract:
+
+```bash
+forge script script/Deploy.s.sol --rpc-url <testnet-rpc> --broadcast   # PRIVATE_KEY from env
+```
+
+- **Deployer wallet:** `0x762593292f543948CA9A9a290adC1770746d059a` — active on **Base Sepolia**
+  (the live testnet for bitwrap publishing); also funded on Ethereum Sepolia.
+- **Key storage:** never committed (no `.env` in the repo). On the **laptop** it's exported in
+  the shell env; on **valoper** it lives at `~/.env-services/bitwrap` (mode 0600) — source with
+  `set -a; . ~/.env-services/bitwrap` before running `forge`.
+- **Not a real key:** the local verify flow in `cmd/bitwrap/main.go` (step 9) hardcodes the
+  well-known public Anvil dev account `0xac09…ff80` and deploys to a throwaway `anvil`
+  (chain-id 31337) — never use it against a real testnet.
