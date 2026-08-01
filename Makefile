@@ -1,4 +1,4 @@
-.PHONY: build run test test-e2e test-playwright test-e2e-wallet test-wasm-prove validate clean wasm gen-circuits
+.PHONY: build run test check-pflow-js sync-pflow-js test-e2e test-playwright test-e2e-wallet test-wasm-prove validate clean wasm gen-circuits
 
 PORT ?= 8088
 
@@ -12,8 +12,16 @@ wasm:
 run: build
 	./bitwrap -port $(PORT)
 
-test:
+test: check-pflow-js
 	go test ./...
+
+# Fail if a browser module vendored from pflow-xyz was edited here instead of
+# upstream. Offline; see scripts/pflow-js.sh.
+check-pflow-js:
+	@./scripts/pflow-js.sh check
+
+sync-pflow-js:
+	@./scripts/pflow-js.sh sync
 
 test-e2e:
 	go test -tags e2e -timeout 600s -v ./internal/server/ -run TestFoundryE2E

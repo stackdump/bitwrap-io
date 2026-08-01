@@ -16,6 +16,13 @@ jobs:
         with:
           go-version: '1.24'
 
+      # The browser modules under public/ are vendored from pflow-xyz. This
+      # fails if one was edited here instead of upstream — the drift that let
+      # petri-sim.js sit 57 lines behind, silently coercing a [0,2] arc weight
+      # to [1,2]. Offline: compares against pflow-js.lock, no checkout needed.
+      - name: Vendored JS matches pflow-js.lock
+        run: ./scripts/pflow-js.sh check
+
       # public/embed.go uses //go:embed all:*.wasm; build that artifact
       # first so go vet can resolve the embed directive.
       - name: Build wasm prover
