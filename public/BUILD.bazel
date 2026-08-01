@@ -1,5 +1,6 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library")
 load("//tools:nodejs_test.bzl", "nodejs_test")
+load("//tools:vendored_js.bzl", "vendored_js_test")
 
 # prover.wasm is a gitignored build artifact (23 MB). Don't let Gazelle glob the
 # on-disk copy into embedsrcs — it's produced hermetically by :gen_prover_wasm
@@ -101,3 +102,25 @@ filegroup(
         "witness_v3_parity",
     ]
 ]
+
+# The browser modules here are copies of pflow-xyz's. pflow-js.lock pins their
+# bytes offline; this pins their VERSION, by diffing them against
+# @pflow_xyz//public:browser_modules at the commit git_override names in
+# MODULE.bazel. Bumping that pin is then a deliberate, reviewable act, and
+# "how far behind is this copy" becomes a build question rather than an
+# archaeological one.
+#
+# Order must match: each vendored file is compared against the upstream file at
+# the same index.
+vendored_js_test(
+    name = "vendored_js_matches_upstream",
+    upstream = ["@pflow_xyz//public:browser_modules"],
+    vendored = [
+        "petri-colors.js",
+        "petri-sim.js",
+        "petri-solver.js",
+        "petri-view.js",
+        "seal-cid.mjs",
+        "vendor/jsonld.bundle.mjs",
+    ],
+)

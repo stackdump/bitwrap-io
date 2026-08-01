@@ -22,6 +22,22 @@ bazel_dep(name = "gazelle", version = "0.51.3", repo_name = "bazel_gazelle")
 # Bazel test targets, so `bazel test //...` covers Go<->JS parity.
 bazel_dep(name = "rules_nodejs", version = "6.7.4")
 
+# The browser modules under public/ are vendored copies of pflow-xyz's. They
+# have to be committed here — public/embed.go embeds them and the Makefile is
+# the ship path — but pflow-js.lock can only pin their bytes, which says nothing
+# about which upstream version they came from.
+#
+# This pins the version. //public:vendored_js_matches_upstream diffs each
+# vendored file against @pflow_xyz//public:browser_modules at the commit below,
+# so bumping the pin is a deliberate, reviewable act and staleness is visible in
+# the build rather than only in a sha256 nobody can date.
+bazel_dep(name = "pflow_xyz", version = "0.0.0")
+git_override(
+    module_name = "pflow_xyz",
+    commit = "d154ee2fe209f14e06642904aef37047d955418b",
+    remote = "https://github.com/pflow-xyz/pflow-xyz.git",
+)
+
 node = use_extension("@rules_nodejs//nodejs:extensions.bzl", "node")
 node.toolchain(node_version = "22.14.0")
 
