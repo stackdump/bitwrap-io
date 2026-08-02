@@ -120,6 +120,7 @@ vendored_js_test(
         "petri-sim.js",
         "petri-solver.js",
         "petri-view.js",
+        "petri-view.css",
         "seal-cid.mjs",
         "vendor/jsonld.bundle.mjs",
     ],

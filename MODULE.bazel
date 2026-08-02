@@ -34,7 +34,7 @@ bazel_dep(name = "rules_nodejs", version = "6.7.4")
 bazel_dep(name = "pflow_xyz", version = "0.0.0")
 git_override(
     module_name = "pflow_xyz",
-    commit = "58119bf143de83e9a8a9feac41d562ca2aa909a6",
+    commit = "7f766f6ffe145c1ce8de9baffbc6541c0a347953",
     remote = "https://github.com/pflow-xyz/pflow-xyz.git",
 )
 

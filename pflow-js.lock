@@ -3,12 +3,13 @@
 # DO NOT EDIT THE VENDORED FILES IN THIS REPO. Change them in pflow-xyz and
 # re-run ./scripts/pflow-js.sh sync. `check` fails the build otherwise.
 #
-# source: github.com/pflow-xyz/pflow-xyz @ 58119bf143de83e9a8a9feac41d562ca2aa909a6
+# source: github.com/pflow-xyz/pflow-xyz @ 7f766f6ffe145c1ce8de9baffbc6541c0a347953
 #
 # <sha256>  <path in this repo>  <path in pflow-xyz>
 55d9bb5572b847ce0500b193167e2c214537b57938051116585b671165032adc  public/petri-sim.js  public/petri-sim.js
 1b750e11c7d57588dcb8a3258fc9aa5686f585c59b78050c63ce4f2a6e0ed915  public/petri-solver.js  public/petri-solver.js
 2d629f9cfeaea63e81c62246478de3030e3ab4194f209ded575448012781b426  public/petri-colors.js  public/petri-colors.js
-f4048c125c1c9261c9be186f373d0d00aef9bb32dcb4103d17b72973c7cde7d9  public/petri-view.js  public/petri-view.js
+444813a9db7c394027f41699e1209ba185fdff3c507db7708886987a1e30debe  public/petri-view.js  public/petri-view.js
+b24650d367eb76d2fd5e9b6d77b26e42e318871d83babc45ca6552192713aca4  public/petri-view.css  public/petri-view.css
 e7433149124fc3e509e672a6d8f0f068073c5889a03d6dc99a8dc1eee3fa6747  public/seal-cid.mjs  public/seal-cid.mjs
 2351cfe38a2a2f573211353195d6e2058311b5944e57e4d9664c3a83d4590859  public/vendor/jsonld.bundle.mjs  public/vendor/jsonld.bundle.mjs

@@ -3,7 +3,7 @@
 # pflow-js.sh — keep JS vendored from pflow-xyz honest.
 #
 # pflow-xyz/public is the canonical source for the shared browser modules
-# (petri-sim.js, petri-solver.js, petri-colors.js, petri-view.js, seal-cid.mjs
+# (petri-sim.js, petri-solver.js, petri-colors.js, petri-view.js, petri-view.css, seal-cid.mjs
 # and the jsonld vendor bundle). Several repos serve their own copy because
 # each embeds its own static assets — so the files must be duplicated on disk,
 # but they must never be duplicated *divergently*.
