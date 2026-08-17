@@ -60,6 +60,7 @@ go_library(
         "wasm_roundtrip_diag.mjs",
         "witness-builder.js",
         "witness_v3_parity.mjs",
+        "petri-colors.js",
     ],
     importpath = "github.com/stackdump/bitwrap-io/public",
     visibility = ["//visibility:public"],
