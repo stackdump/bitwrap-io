@@ -119,3 +119,20 @@ forge script script/Deploy.s.sol --rpc-url <testnet-rpc> --broadcast   # PRIVATE
 - **Not a real key:** the local verify flow in `cmd/bitwrap/main.go` (step 9) hardcodes the
   well-known public Anvil dev account `0xac09…ff80` and deploys to a throwaway `anvil`
   (chain-id 31337) — never use it against a real testnet.
+
+## Decommissioning
+
+ZK container editor at bitwrap.io (pflow.dev :8088).
+
+See [Archiving, backing up and taking down a project](../stackdump-com/CLAUDE.md#archiving-backing-up-and-taking-down-a-project) for the ecosystem-wide procedure and the ordering. This section records only what **this** project holds, which is the part that differs.
+
+**State that is not in git** (every path below is gitignored):
+
+| Host | Path | Size | What it is |
+|---|---|---|---|
+| pflow.dev | `~/Workspace/bitwrap-io/data/` | 153M | prover artifacts |
+| valoper | `data/` | 208K | local working copy |
+
+**Specific to this project:**
+
+- Vendored pflow-xyz JS is a copy, not a source — nothing to preserve there.
