@@ -227,6 +227,9 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/svg+xml")
 	case strings.HasSuffix(name, ".json"):
 		w.Header().Set("Content-Type", "application/json")
+	case strings.HasSuffix(name, ".txt"):
+		// llms.txt / llms-full.txt (llmstxt.org)
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	case strings.HasSuffix(name, ".wasm"):
 		// instantiateStreaming requires application/wasm; otherwise the
 		// browser falls back to the slower instantiate path.

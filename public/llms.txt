@@ -1,0 +1,77 @@
+# bitwrap.io
+
+> Petri nets as ZK containers. A single Go binary that turns a Petri net
+> schema (`.btw` DSL or JSON-LD) into Solidity contracts, Foundry tests, and
+> Groth16 circuits — no hand-written gnark — and runs the flagship
+> application: anonymous on-chain voting where every ballot carries a ZK
+> proof, results stay sealed until close, and the tally is publicly
+> auditable. Models are content-addressed (CID via URDNA2015 JSON-LD
+> canonicalization). API is CORS-open; client modules are dependency-free ES
+> modules.
+
+The core idea: a Petri net's structure maps directly onto circuit
+constraints. Keyed input arcs become Merkle membership proofs, keyed output
+arcs become post-state commitments, guards become range checks, roles become
+caller-equality checks, and ZKOps (nullifier-bind, commitment-bind) become
+hash-derivation constraints. One `.btw` source yields contract + tests +
+circuits + witness builders that agree byte-for-byte.
+
+## Docs
+
+- [Full guide](https://bitwrap.io/llms-full.txt): voting protocol, every API
+  endpoint, `.btw` DSL, circuit synthesis, client modules, operator CLI
+- [README](https://github.com/stackdump/bitwrap-io#readme): quick start,
+  architecture, license (MIT)
+- [Book](https://book.pflow.xyz): Petri nets as a universal abstraction
+
+## Apps
+
+- [Polls](https://bitwrap.io/poll): create a poll (wallet-signed), register,
+  cast a Groth16-proven vote, read sealed/closed results
+- [Editor](https://bitwrap.io/editor): visual Petri net editor; save models
+  as content-addressed JSON-LD, load ERC-20/721/1155/Vote templates
+- [Remix plugin](https://bitwrap.io/remix): generate and deploy contracts
+  inside Remix IDE (also at solver.bitwrap.io)
+
+## API
+
+- [Polls](https://bitwrap.io/api/polls): `POST` create / `GET` list; per-poll
+  `/vote`, `/register`, `/registry`, `/close`, `/reveal`, `/results`,
+  `/nullifiers`, `/votes`, `/aggregate` (v3 close), `/tally`, `/tally-proof`
+- [Templates](https://bitwrap.io/api/templates): list ERC templates;
+  `/api/templates/{id}` returns the full JSON-LD model
+- [Circuits](https://bitwrap.io/api/circuits): list compiled Groth16
+  circuits; `POST /api/prove` with a witness; `GET /api/vk/{circuit}` and
+  `/api/vk/{circuit}/solidity` for verifying key + Solidity verifier
+- [Codegen](https://bitwrap.io/api/bundle/vote): `POST /api/solgen`,
+  `/api/testgen`, `/api/genesisgen`, `/api/compile` (.btw → schema JSON);
+  `GET /api/bundle/{vote|vote-v3}` downloads a complete Foundry project ZIP
+- [Models](https://bitwrap.io/api/save): `POST /api/save` returns `{cid}`;
+  `GET /o/{cid}` loads JSON-LD; `GET /img/{cid}.svg` and `POST /api/svg`
+  render SVG
+
+## Client modules (ES modules, zero deps)
+
+- [mimc.js](https://bitwrap.io/mimc.js): MiMC-BN254 hash (pure BigInt)
+- [merkle.js](https://bitwrap.io/merkle.js): fixed-depth binary Merkle tree
+  with proof generation
+- [witness-builder.js](https://bitwrap.io/witness-builder.js): witness
+  builders for every generated circuit
+- [pedersen.js](https://bitwrap.io/pedersen.js): BabyJubJub Pedersen
+  commitments (v3 homomorphic tally)
+- [prover.js](https://bitwrap.io/prover.js): browser-side Groth16 proving
+  via prover.wasm in a Web Worker
+- [seal-cid.mjs](https://bitwrap.io/seal-cid.mjs): CID computation matching
+  the Go sealer
+- [petri-view.js](https://bitwrap.io/petri-view.js): `<petri-view>` editor
+  web component (vendored from pflow.xyz; fix bugs upstream)
+
+## Related
+
+- [pflow.xyz](https://pflow.xyz): canonical Petri net editor + ODE/simulation
+  library; source of the shared browser modules
+- [beats.bitwrap.io](https://beats.bitwrap.io): Petri-net beat sequencer
+- [blog.stackdump.com](https://blog.stackdump.com): writing on Petri nets and
+  systems
+- [jsDelivr mirror](https://cdn.jsdelivr.net/gh/stackdump/bitwrap-io@latest/public/mimc.js):
+  `cdn.jsdelivr.net/gh/stackdump/bitwrap-io@<tag>/public/<module>`

@@ -5,7 +5,7 @@ import (
 	"io/fs"
 )
 
-//go:embed all:*.html all:*.js all:*.mjs all:*.css all:*.svg all:*.wasm all:vendor
+//go:embed all:*.html all:*.js all:*.mjs all:*.css all:*.svg all:*.wasm all:*.txt all:vendor
 var publicFS embed.FS
 
 // FS returns the embedded public filesystem

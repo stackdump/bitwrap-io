@@ -1,0 +1,228 @@
+# bitwrap.io — Petri nets as ZK containers
+
+bitwrap is a single Go binary (vanilla JS frontend, no npm, no build step)
+that treats a Petri net schema as the source of truth for an on-chain
+application. From one `.btw` file (or a JSON-LD model saved from the editor)
+it generates Solidity contracts, Foundry test suites, Groth16 circuits, and
+browser witness builders. The flagship application built this way is
+anonymous on-chain voting: every ballot is a Groth16 proof, nobody sees how
+you voted, results are sealed while the poll is active, and the final tally
+is publicly verifiable.
+
+Hosts: https://bitwrap.io (landing), /poll, /editor, /remix. The subdomains
+app.bitwrap.io, api.bitwrap.io, solver.bitwrap.io and prover.bitwrap.io all
+reach the same server. All API routes answer CORS preflight and echo the
+request `Origin`, so they can be called from any page. Source:
+https://github.com/stackdump/bitwrap-io (MIT).
+
+## Voting protocol
+
+1. **Create.** `POST /api/polls` with title, choices, and an EIP-191
+   `personal_sign` signature from the creator's Ethereum wallet. No accounts,
+   no passwords — the wallet is the identity.
+2. **Register.** Voters post a commitment hash to `/api/polls/{id}/register`;
+   the server keeps a fixed-depth Merkle registry (`/registry`). The creator
+   may sign the registry root (`/sign-registry-root`) to freeze it.
+3. **Vote.** The client derives a nullifier as `mimcHash(voterSecret, pollId)`
+   (the secret can itself be derived from a wallet signature, so it is
+   deterministic per voter per poll), builds a witness with
+   `witness-builder.js`, proves `voteCast` in the browser (`prover.js` +
+   `prover.wasm`) or via `POST /api/prove`, and posts
+   `{nullifier, voteCommitment, proof}` to `/api/polls/{id}/vote`. The
+   circuit checks Merkle inclusion in the registry, nullifier binding, and
+   vote range; a reused nullifier is rejected without revealing who voted.
+4. **Sealed results.** While active, `/api/polls/{id}/results` returns only
+   the vote count. Tallies, nullifiers and commitments are withheld so an
+   observer cannot diff the tally after each vote and correlate timing to
+   de-anonymize voters.
+5. **Close.** `POST /api/polls/{id}/close` (creator signature). Afterwards
+   `/results`, `/nullifiers`, `/votes` and `/reveal` expose the full audit
+   trail; `/tally-proof` (`POST` to generate, `GET` to fetch) carries a proof
+   over the final tally.
+
+### v3: homomorphic tally
+
+v3 polls encrypt each ballot under the creator's BabyJubJub public key
+(Pedersen/ElGamal-style, `pedersen.js`). Ballot ciphertexts are summed
+per-bin without decryption; at close the creator decrypts the aggregate and
+proves it with the `tallyDecrypt_8` circuit, then `POST /api/polls/{id}/aggregate`
+with `{creator, signature, tallies, decryptProofBytes}`. The tally artifact is
+served at `GET /api/polls/{id}/tally`. The `bitwrap close-poll <pollId>`
+subcommand does the whole close from the command line:
+
+```sh
+bitwrap close-poll <pollId> --sk-hex-file=./creator-bjj.key \
+    --eth-key-file=./creator-eth.key --server=https://bitwrap.io
+# or BITWRAP_SK_HEX / BITWRAP_ETH_KEY env vars; or --signature=<eip191sig>
+# to sign externally in two steps.  --key-dir caches the compiled circuit.
+```
+
+## API reference
+
+Polls:
+
+```
+POST /api/polls                         Create (wallet signature required)
+GET  /api/polls                         List
+GET  /api/polls/{id}                    Details
+POST /api/polls/{id}/register           Register voter commitment
+GET  /api/polls/{id}/registry           Merkle registry
+POST /api/polls/{id}/sign-registry-root Creator signs registry root
+POST /api/polls/{id}/vote               Cast ZK-proven vote
+POST /api/polls/{id}/close              Close (creator signature)
+POST /api/polls/{id}/reveal             Reveal a vote choice (post-close)
+GET  /api/polls/{id}/results            Results (sealed while active)
+GET  /api/polls/{id}/nullifiers         Spent nullifiers
+GET  /api/polls/{id}/votes              Per-vote records / v3 ciphertexts
+POST /api/polls/{id}/aggregate          v3 close with signed aggregate proof
+GET  /api/polls/{id}/tally              v3 tally artifact (post-close)
+POST /api/polls/{id}/tally-proof        Generate tally proof
+GET  /api/polls/{id}/tally-proof        Fetch tally proof
+```
+
+Models and templates:
+
+```
+POST /api/save                  Save JSON-LD model -> {"cid": "..."}
+GET  /o/{cid}                   Load model (application/ld+json)
+GET  /img/{cid}.svg             Render saved model as SVG
+POST /api/svg                   Render posted JSON-LD as SVG
+GET  /api/templates             List ERC templates (020, 721, 1155, 4626, 5725, vote)
+GET  /api/templates/{id}        Full template model (JSON-LD)
+```
+
+Code generation (server must run with `-solgen`; enabled on bitwrap.io):
+
+```
+POST /api/solgen                Solidity contract from a template/model
+POST /api/testgen               Foundry test suite
+POST /api/genesisgen            Genesis/deploy script
+POST /api/compile               .btw DSL -> schema JSON
+GET  /api/bundle/vote           Foundry project ZIP: v1/v2 poll + voteCast verifier
+GET  /api/bundle/vote-v3        ZIP: BitwrapZKPollV3 + voteCastHomomorphic_8 +
+                                tallyDecrypt_8 verifiers
+```
+
+ZK prover:
+
+```
+GET  /api/circuits              List compiled Groth16 circuits
+POST /api/prove                 Submit a witness, receive a proof
+GET  /api/vk/{circuit}          Verifying key (binary)
+GET  /api/vk/{circuit}/solidity Solidity verifier contract (text/plain)
+GET  /api/keys/{circuit}        Proving key material (binary)
+```
+
+Other: `GET /metrics` (Prometheus). `POST /api/dev/sign` exists for local
+development wallets only.
+
+## Model format
+
+Models saved from the editor are JSON-LD with `@context: https://pflow.xyz/schema`
+— the same format as pflow.xyz (`places` and `transitions` keyed by id, `arcs`
+as `{source, target, weight}` with vector weights per token color). The CID
+returned by `/api/save` is computed from the URDNA2015-canonicalized document
+(CIDv1, sha256); `seal-cid.mjs` reproduces it in the browser and the Go
+sealer (`internal/seal`) is the reference. `/o/{cid}` serves the document
+back unchanged.
+
+## The .btw DSL
+
+`.btw` is a compact schema language for Petri net state machines. Registers
+are places (optionally keyed maps), `fn(...)` blocks are transitions, arrows
+`-|weight|>` are arcs, `require(...)` lines are guards, `@event` emits a
+Solidity event, and `requires <role>` binds a caller role.
+
+```
+schema Poll {
+  version "1.0"
+  register nullifiers map[uint256]bool observable
+  register tallies map[uint256]uint256 observable
+  event VoteCast { nullifier: uint256 indexed  choice: uint256 }
+  fn(castVote) {
+    var nullifier uint256
+    var choice uint256
+    var weight uint256
+    require(nullifiers[nullifier] == false)
+    @event VoteCast
+    castVote -|weight|> tallies
+    castVote -|weight|> nullifiers
+  }
+}
+```
+
+`bitwrap -compile poll.btw` emits schema JSON (same as `POST /api/compile`);
+`bitwrap -synthesize examples/erc20.btw` emits gnark circuit source;
+`bitwrap -validate` runs the end-to-end deploy pipeline (needs Foundry's
+`forge` + `anvil`).
+
+## Circuit synthesis
+
+There is no hand-written gnark code in the repo. `prover/synth` maps schema
+primitives onto Groth16 constraints:
+
+| Petri net primitive                    | Circuit constraint                      |
+|----------------------------------------|-----------------------------------------|
+| keyed input arc `BALANCES[from] -|n|>` | Merkle membership proof in pre-state    |
+| keyed output arc `-|n|> BALANCES[to]`  | post-state commitment hash              |
+| guard `BALANCES[from] >= n`            | range check via `ToBinary`              |
+| role `fn(mint) requires minter`        | `caller == minter` equality             |
+| ZKOp nullifier-bind / commitment-bind  | MiMC / Keccak derivation constraint     |
+
+Generated circuits: transfer, mint, burn, approve, transferFrom, vestClaim,
+voteCast (v1/v2), plus voteCastHomomorphic_8 and tallyDecrypt_8 (v3). Each is
+a `frontend.Circuit` with public/private partitioning and Merkle arrays sized
+per `State.MerkleDepth`. The verifying key and the Solidity verifier are
+produced together, so on-chain verification matches off-chain proving
+byte-for-byte. CI runs `make gen-circuits && git diff --exit-code` to catch
+stale output.
+
+## Client modules
+
+All are dependency-free ES modules served from https://bitwrap.io/ (CORS-open)
+and mirrored at `https://cdn.jsdelivr.net/gh/stackdump/bitwrap-io@<tag>/public/<file>`.
+
+```html
+<script type="module">
+import { mimcHash } from "https://bitwrap.io/mimc.js";
+import { MerkleTree } from "https://bitwrap.io/merkle.js";
+import { buildVoteCastWitness } from "https://bitwrap.io/witness-builder.js";
+</script>
+```
+
+- `mimc.js` — MiMC-BN254 hash, pure BigInt.
+- `merkle.js` — fixed-depth binary Merkle tree with inclusion proofs.
+- `witness-builder.js` — witness builders for every generated circuit.
+- `pedersen.js` — BabyJubJub Pedersen commitments for v3 ballots.
+- `prover.js` / `prover-worker.js` / `prover.wasm` — Groth16 proving in a
+  Web Worker (the Go prover cross-compiled to wasm; `wasm_exec.js` runtime).
+- `seal-cid.mjs` — JSON-LD canonicalization + CID, parity-tested against Go.
+- `petri-view.js`, `petri-view.css`, `petri-sim.js`, `petri-solver.js`,
+  `petri-colors.js` — vendored copies of the pflow.xyz browser modules, pinned
+  by hash (`pflow-js.lock`) and by version (Bazel `git_override`). For the
+  editor/simulator/ODE API, read https://pflow.xyz/llms-full.txt; bugs in
+  these files are fixed in pflow-xyz and synced here.
+
+Go <-> JS parity (MiMC, Pedersen, witness layout, CID, type coercion) is
+enforced by `.mjs` tests under `public/` that run in CI and under Bazel.
+
+## Running locally
+
+```sh
+git clone https://github.com/stackdump/bitwrap-io && cd bitwrap-io
+make run          # :8088 ; flags: -port -data -solgen -compile -synthesize -validate
+make test         # Go tests + vendored-JS hash check
+```
+
+Go >= 1.24. Foundry only for `make validate`; npm only for the Playwright e2e
+suite. Polls, votes and events are stored on the filesystem under `-data`.
+
+## Related
+
+- https://pflow.xyz — canonical Petri net editor, discrete simulator and ODE
+  library; origin of the shared browser modules. https://pflow.xyz/llms.txt
+- https://pilot.pflow.xyz/mcp — petri-pilot MCP server: analysis, validation
+  and full-stack code generation from Petri net models
+- https://book.pflow.xyz — the book on modeling with Petri nets
+- https://beats.bitwrap.io — Petri-net beat sequencer built on the same stack
+- https://blog.stackdump.com — writing on Petri nets, ZK and systems
