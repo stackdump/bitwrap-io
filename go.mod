@@ -9,7 +9,7 @@ require (
 	github.com/ipfs/go-cid v0.6.0
 	github.com/multiformats/go-multibase v0.2.0
 	github.com/multiformats/go-multihash v0.2.3
-	github.com/pflow-xyz/go-pflow v0.22.0
+	github.com/pflow-xyz/go-pflow v0.27.0
 	github.com/piprate/json-gold v0.7.0
 	github.com/rs/zerolog v1.34.0
 	golang.org/x/crypto v0.44.0
