@@ -3,11 +3,15 @@
 [![CI](https://github.com/stackdump/bitwrap-io/actions/workflows/ci.yml/badge.svg)](https://github.com/stackdump/bitwrap-io/actions/workflows/ci.yml)
 [![jsDelivr](https://data.jsdelivr.com/v1/package/gh/stackdump/bitwrap-io/badge)](https://www.jsdelivr.com/package/gh/stackdump/bitwrap-io)
 
+> **Not currently live-hosted.** bitwrap.io now redirects to
+> [beats.bitwrap.io](https://beats.bitwrap.io). This project is not in active
+> development; the code below still builds and runs locally.
+
 **Anonymous on-chain voting with ZK proofs.**
 
 Create polls where every vote is backed by a Groth16 proof. No one sees how you voted. Everyone can verify the result is correct. Deploy to any EVM chain.
 
-**[bitwrap.io](https://bitwrap.io)** | **[Polls](https://bitwrap.io/poll)** | **[Editor](https://app.bitwrap.io)** | **[Docs](https://book.pflow.xyz)**
+**[Docs](https://book.pflow.xyz)**
 
 ## Quick start
 
