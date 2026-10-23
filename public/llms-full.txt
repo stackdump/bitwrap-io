@@ -221,8 +221,9 @@ suite. Polls, votes and events are stored on the filesystem under `-data`.
 
 - https://pflow.xyz — canonical Petri net editor, discrete simulator and ODE
   library; origin of the shared browser modules. https://pflow.xyz/llms.txt
-- https://pilot.pflow.xyz/mcp — petri-pilot MCP server: analysis, validation
-  and full-stack code generation from Petri net models
+- https://sim.pflow.xyz — describe a process and get an executable Petri-net
+  model you can run and check; MCP server at https://sim.pflow.xyz/mcp
+  (`sim_*` tools). https://sim.pflow.xyz/llms.txt
 - https://book.pflow.xyz — the book on modeling with Petri nets
 - https://beats.bitwrap.io — Petri-net beat sequencer built on the same stack
 - https://blog.stackdump.com — writing on Petri nets, ZK and systems

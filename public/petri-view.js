@@ -64,7 +64,7 @@ PetriView = class PetriView extends HTMLElement {
     // which a release commit bumps alongside the annotated git tag — there is no
     // build step for this file, so the value cannot be injected. `make
     // test-version` fails the build if the two ever drift.
-    static VERSION = '1.27.0';
+    static VERSION = '1.28.0';
 
     constructor() {
         super();
@@ -4989,11 +4989,23 @@ PetriView = class PetriView extends HTMLElement {
                 Read it at <a href="https://book.pflow.xyz" target="_blank" style="color: #4a90d9;">book.pflow.xyz</a>.
             </p>
 
-            <h3>🚀 Petri Pilot</h3>
+            <h3>📊 Sim — Run & Check</h3>
             <p>
-                <strong>Petri Pilot</strong> generates full-stack apps from Petri net models.
-                Try 14 live demos at <a href="https://pilot.pflow.xyz" target="_blank" style="color: #4a90d9;">pilot.pflow.xyz</a>
-                — games, workflows, protocols, biochemical models, and optimization problems.
+                <strong>sim.pflow.xyz</strong> runs and checks this model: describe a
+                process to your AI assistant (it has an MCP server) or store this net,
+                then compare seeded what-if scenarios, prove invariants and reachability,
+                calibrate rates against your own event logs, and see which knobs move
+                the outcome. Try it at
+                <a href="https://sim.pflow.xyz" target="_blank" style="color: #4a90d9;">sim.pflow.xyz</a>.
+            </p>
+
+            <h3>🖥 Native App</h3>
+            <p>
+                <strong>pflow-native</strong> is a desktop editor and simulator for the same
+                JSON-LD models, built on pflow-rs: token game, ODE and stochastic simulation,
+                invariants, reachability and process mining, all drivable from a CLI or an
+                MCP server. Source at
+                <a href="https://github.com/pflow-xyz/pflow-native" target="_blank" style="color: #4a90d9;">github.com/pflow-xyz/pflow-native</a>.
             </p>
 
             <h3>Controls & Features</h3>
@@ -5065,7 +5077,7 @@ PetriView = class PetriView extends HTMLElement {
             <h3>Analysis Workbench</h3>
             <p>
                 Continuous-time math tools for the current model, computed in the browser with the same
-                mass-action semantics and Tsit5 solver options as go-pflow and Petri Pilot.
+                mass-action semantics and Tsit5 solver options as go-pflow.
                 Open it from the hamburger menu (<strong>🧮 Analysis</strong>) or press <strong>9</strong>.
             </p>
 
@@ -5082,9 +5094,6 @@ PetriView = class PetriView extends HTMLElement {
             <h4>Results:</h4>
             <ul>
                 <li><strong>CSV / JSON:</strong> Download the raw series behind any plot</li>
-                <li><strong>Copy MCP call:</strong> Copies the equivalent Petri Pilot MCP <code>tools/call</code>
-                payload (petri_ode, petri_rate_scan, petri_ode_sweep, petri_phase_plot) so an AI assistant —
-                or <code>curl https://pilot.pflow.xyz/mcp</code> — can reproduce the analysis</li>
                 <li><strong>Rate=0 disables a transition:</strong> useful for knapsack-style exclusion tests
                 and quick sensitivity checks</li>
             </ul>
@@ -5147,104 +5156,12 @@ PetriView = class PetriView extends HTMLElement {
         });
     }
 
-    // ---------------- Petri Pilot dialog ----------------
-    _showPetriPilotDialog() {
-        // Create modal overlay
-        const { overlay, dialog } = this._createModalOverlay({
-            className: 'pv-help-dialog',
-            dialogClass: 'pv-modal-dialog'
-        });
-
-        // Title
-        const title = document.createElement('h2');
-        title.className = 'pv-help-title';
-        title.textContent = '🚀 Petri Pilot';
-        dialog.appendChild(title);
-
-        // Content
-        const content = document.createElement('div');
-        content.className = 'pv-help-content';
-
-        content.innerHTML = `
-            <h3>What is Petri Pilot?</h3>
-            <p>
-                <strong>Petri Pilot</strong> generates full-stack applications from Petri net models —
-                event-sourced Go backends, ES modules frontends, GraphQL APIs, and SQLite persistence.
-                Design visually, generate code, run instantly.
-            </p>
-
-            <h3>Live Demos</h3>
-            <p>Every demo is a running app generated from a Petri net model:</p>
-            <ul style="column-count: 2; column-gap: 24px;">
-                <li><a href="https://pilot.pflow.xyz/tic-tac-toe/" target="_blank" style="color: #4a90d9;">Tic-Tac-Toe</a> — state machines, ODE analysis</li>
-                <li><a href="https://pilot.pflow.xyz/zk-tic-tac-toe/" target="_blank" style="color: #4a90d9;">ZK Tic-Tac-Toe</a> — zero-knowledge proofs</li>
-                <li><a href="https://pilot.pflow.xyz/coffeeshop/" target="_blank" style="color: #4a90d9;">Coffee Shop</a> — capacity, weighted arcs</li>
-                <li><a href="https://pilot.pflow.xyz/texas-holdem/" target="_blank" style="color: #4a90d9;">Texas Hold'em</a> — roles, guards, event sourcing</li>
-                <li><a href="https://pilot.pflow.xyz/knapsack/" target="_blank" style="color: #4a90d9;">Knapsack</a> — optimization, mass-action kinetics</li>
-                <li><a href="https://pilot.pflow.xyz/predator-prey/" target="_blank" style="color: #4a90d9;">Predator-Prey</a> — Lotka-Volterra dynamics</li>
-                <li><a href="https://pilot.pflow.xyz/dining-philosophers/" target="_blank" style="color: #4a90d9;">Dining Philosophers</a> — deadlock, mutual exclusion</li>
-                <li><a href="https://pilot.pflow.xyz/loan-approval/" target="_blank" style="color: #4a90d9;">Loan Approval</a> — multi-stage workflow</li>
-                <li><a href="https://pilot.pflow.xyz/tcp-handshake/" target="_blank" style="color: #4a90d9;">TCP Handshake</a> — protocol state machines</li>
-                <li><a href="https://pilot.pflow.xyz/thermostat/" target="_blank" style="color: #4a90d9;">Thermostat</a> — feedback loops, control</li>
-                <li><a href="https://pilot.pflow.xyz/producer-consumer/" target="_blank" style="color: #4a90d9;">Producer-Consumer</a> — buffered channels</li>
-                <li><a href="https://pilot.pflow.xyz/hiring-pipeline/" target="_blank" style="color: #4a90d9;">Hiring Pipeline</a> — multi-phase tracking</li>
-                <li><a href="https://pilot.pflow.xyz/enzyme-kinetics/" target="_blank" style="color: #4a90d9;">Enzyme Kinetics</a> — Michaelis-Menten</li>
-                <li><a href="https://pilot.pflow.xyz/stoplight/" target="_blank" style="color: #4a90d9;">Stoplight</a> — cyclic state machines</li>
-            </ul>
-
-            <h3>MCP Integration</h3>
-            <p>
-                Use Petri Pilot tools via <strong>MCP</strong> from AI assistants —
-                validate, simulate, analyze, and generate full-stack apps from models.
-            </p>
-        `;
-
-        dialog.appendChild(content);
-
-        // Button container
-        const buttonContainer = document.createElement('div');
-        buttonContainer.style.cssText = 'display: flex; gap: 12px; justify-content: center; margin-top: 20px;';
-
-        // Visit Petri Pilot button
-        const visitBtn = document.createElement('button');
-        visitBtn.className = 'pv-help-close-btn';
-        visitBtn.style.cssText = 'background: #4a9eda; color: white;';
-        visitBtn.textContent = 'Visit Petri Pilot →';
-        visitBtn.type = 'button';
-        visitBtn.addEventListener('click', () => {
-            window.open('https://pilot.pflow.xyz', '_blank', 'noopener,noreferrer');
-        });
-        buttonContainer.appendChild(visitBtn);
-
-        // Close button
-        const closeBtn = document.createElement('button');
-        closeBtn.className = 'pv-help-close-btn';
-        closeBtn.textContent = 'Close';
-        closeBtn.type = 'button';
-        closeBtn.addEventListener('click', () => {
-            document.body.removeChild(overlay);
-        });
-        buttonContainer.appendChild(closeBtn);
-
-        dialog.appendChild(buttonContainer);
-
-        document.body.appendChild(overlay);
-
-        // Close on overlay click
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) {
-                document.body.removeChild(overlay);
-            }
-        });
-    }
-
     // ---------------- Analysis workbench (ODE + math tools) ----------------
     //
     // One tabbed dialog for the continuous-math tools, computed client-side
-    // with petri-solver.js. Tabs mirror petri-pilot's MCP tools (petri_ode,
-    // petri_rate_scan, petri_ode_sweep, petri_phase_plot) — the solver options
-    // match pilot's JSParityOptions, so a result here is reproducible via MCP,
-    // and "Copy MCP call" emits the equivalent tools/call payload.
+    // with petri-solver.js: Simulate, Rate Scan, Sweep and Phase Plot. The solver
+    // options default to go-pflow's solver.JSParityOptions(), so a result here
+    // is reproducible with go-pflow's Tsit5.
 
     _escHtml(s) {
         return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -5283,49 +5200,6 @@ PetriView = class PetriView extends HTMLElement {
         a.download = filename;
         a.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
-    }
-
-    /**
-     * Convert the JSON-LD model to petri-pilot's flat schema (v1), the format
-     * its MCP tools accept. Color vectors are summed — pilot's math tools are
-     * scalar; the note field flags it when information was folded.
-     */
-    _pilotModelJSON() {
-        const m = this._model;
-        const out = {
-            name: (document.title || 'pflow-model').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'pflow-model',
-            places: [],
-            transitions: [],
-            arcs: [],
-        };
-        let folded = false;
-        for (const [id, p] of Object.entries(m.places || {})) {
-            const init = Array.isArray(p.initial) ? p.initial : [p.initial || 0];
-            if (init.length > 1) folded = true;
-            out.places.push({ id, initial: init.reduce((a, b) => a + (b || 0), 0), x: p.x || 0, y: p.y || 0 });
-        }
-        for (const [id, t] of Object.entries(m.transitions || {})) {
-            out.transitions.push({ id, x: t.x || 0, y: t.y || 0 });
-        }
-        for (const a of (m.arcs || [])) {
-            const w = Array.isArray(a.weight) ? a.weight : [a.weight || 1];
-            if (w.length > 1) folded = true;
-            const arc = { from: a.source, to: a.target, weight: w.reduce((x, y) => x + (y || 0), 0) || 1 };
-            if (a.inhibitTransition) arc.inhibit = true;
-            out.arcs.push(arc);
-        }
-        if (folded) out.description = 'Exported from pflow.xyz; multi-color token vectors were summed to scalars.';
-        return out;
-    }
-
-    /** JSON-RPC tools/call payload for pilot.pflow.xyz/mcp. */
-    _pilotCall(tool, args) {
-        return JSON.stringify({
-            jsonrpc: '2.0',
-            id: 1,
-            method: 'tools/call',
-            params: { name: tool, arguments: { model: JSON.stringify(this._pilotModelJSON()), ...args } },
-        }, null, 2);
     }
 
     /** Solve the current model's ODE once. Options default to JS/Go parity values. */
@@ -5488,7 +5362,6 @@ PetriView = class PetriView extends HTMLElement {
                 <button type="button" class="pv-btn pv-btn-primary" data-act="run">Run</button>
                 <button type="button" class="pv-btn" data-act="csv" disabled>CSV</button>
                 <button type="button" class="pv-btn" data-act="json" disabled>JSON</button>
-                <button type="button" class="pv-btn" data-act="mcp" title="Copy the equivalent petri-pilot MCP tools/call payload">Copy MCP call</button>
                 <button type="button" class="pv-btn" data-act="gist" disabled>Export to Gist</button>
                 <button type="button" class="pv-btn" data-act="close">Close</button>
             </div>`;
@@ -5705,34 +5578,6 @@ PetriView = class PetriView extends HTMLElement {
             if (lastResult) this._downloadFile(lastResult.filename + '.json', JSON.stringify(lastResult.json, null, 2), 'application/json');
         });
         gistBtn.addEventListener('click', () => this._exportODESimulationToGist({}));
-        $('[data-act="mcp"]').addEventListener('click', () => {
-            readState();
-            const calls = {
-                simulate: () => this._pilotCall('petri_ode', { rates: JSON.stringify(st.rates), tspan: `[0,${st.tend}]` }),
-                scan: () => this._pilotCall('petri_rate_scan', {
-                    transition: st.scanTransition,
-                    range: `[${st.range.start},${st.range.stop},${st.range.n}]`,
-                    observables: JSON.stringify(st.selected),
-                    fixed_rates: JSON.stringify(st.rates),
-                }),
-                sweep: () => this._pilotCall('petri_ode_sweep', {
-                    transition: st.scanTransition,
-                    observable: st.sweepObservable,
-                    range: `[${st.range.start},${st.range.stop},${st.range.n}]`,
-                    fixed_rates: JSON.stringify(st.rates),
-                    tspan: `[0,${st.tend}]`,
-                }),
-                phase: () => this._pilotCall('petri_phase_plot', {
-                    place_x: st.phaseX, place_y: st.phaseY,
-                    rates: JSON.stringify(st.rates), tspan: `[0,${st.tend}]`,
-                }),
-            };
-            const payload = calls[st.tab]();
-            navigator.clipboard.writeText(payload).then(
-                () => this._toast('MCP tools/call payload copied — POST it to https://pilot.pflow.xyz/mcp'),
-                () => this._toast('Clipboard unavailable', 'error'),
-            );
-        });
 
         dialog.tabIndex = -1;
         dialog.focus();
@@ -7352,20 +7197,20 @@ PetriView = class PetriView extends HTMLElement {
         });
         menuContainer._menuContent.appendChild(helpItem);
 
-        const petriPilotItem = makeMenuItem('🚀 Petri Pilot', () => {
-            this._showPetriPilotDialog();
+        const simItem = makeMenuItem('📊 Sim — Run & Check', () => {
+            window.open('https://sim.pflow.xyz', '_blank', 'noopener,noreferrer');
         });
-        menuContainer._menuContent.appendChild(petriPilotItem);
-
-        const codeToFlowItem = makeMenuItem('🔄 Code to Flow', () => {
-            window.open('https://pilot.pflow.xyz/code-to-flow/', '_blank', 'noopener,noreferrer');
-        });
-        menuContainer._menuContent.appendChild(codeToFlowItem);
+        menuContainer._menuContent.appendChild(simItem);
 
         const bookItem = makeMenuItem('📖 Book', () => {
             window.open('https://book.pflow.xyz', '_blank', 'noopener,noreferrer');
         });
         menuContainer._menuContent.appendChild(bookItem);
+
+        const nativeItem = makeMenuItem('🖥 Native App', () => {
+            window.open('https://github.com/pflow-xyz/pflow-native', '_blank', 'noopener,noreferrer');
+        });
+        menuContainer._menuContent.appendChild(nativeItem);
 
         const githubItem = makeMenuItem('GitHub', () => {
             window.open('https://github.com/pflow-xyz/pflow-xyz', '_blank', 'noopener,noreferrer');
